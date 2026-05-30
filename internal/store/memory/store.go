@@ -508,6 +508,22 @@ func (s *Store) CreateSSHKey(_ context.Context, params store.CreateSSHKeyParams)
 	return key, nil
 }
 
+func (s *Store) ListSSHKeysByUser(_ context.Context, userID int64) ([]store.SSHKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	keys := make([]store.SSHKey, 0)
+	for _, key := range s.sshKeys {
+		if key.UserID == userID {
+			keys = append(keys, key)
+		}
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return keys[i].CreatedAt.Before(keys[j].CreatedAt)
+	})
+	return keys, nil
+}
+
 func (s *Store) GetUserBySSHFingerprint(_ context.Context, fingerprint string) (store.User, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

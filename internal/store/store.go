@@ -166,6 +166,7 @@ type Store interface {
 	GetSessionByTokenID(ctx context.Context, tokenID string) (Session, error)
 	RevokeSession(ctx context.Context, tokenID string, revokedAt time.Time) error
 	CreateSSHKey(ctx context.Context, params CreateSSHKeyParams) (SSHKey, error)
+	ListSSHKeysByUser(ctx context.Context, userID int64) ([]SSHKey, error)
 	GetUserBySSHFingerprint(ctx context.Context, fingerprint string) (User, error)
 	TouchSSHKeyUsage(ctx context.Context, fingerprint string, usedAt time.Time) error
 	WithRepositoryLease(ctx context.Context, owner, name string, fn func(context.Context) error) error

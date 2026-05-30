@@ -94,6 +94,16 @@ type organizationListResponse struct {
 	Organizations []store.OrganizationMembership `json:"organizations"`
 }
 
+type sshKeyListResponse struct {
+	Keys []store.SSHKey `json:"keys"`
+}
+
+type repositoryDetailResponse struct {
+	Repository   store.Repository `json:"repository"`
+	HTTPCloneURL string           `json:"http_clone_url"`
+	SSHCloneURL  string           `json:"ssh_clone_url,omitempty"`
+}
+
 func New(cfg config.Config, logger *slog.Logger, st store.Store, repositories *repository.Service) (*Server, error) {
 	s := &Server{
 		cfg:          cfg,
@@ -120,6 +130,15 @@ func (s *Server) routes() http.Handler {
 
 	r.Get("/healthz", s.handleHealthz)
 	r.Get("/readyz", s.handleReadyz)
+	r.Get("/", s.handleAppEntry)
+	r.Get("/app", s.handleAppEntry)
+	r.Get("/app/login", s.handleUIPage("Forge | Sign In", "login").ServeHTTP)
+	r.Get("/app/register", s.handleUIPage("Forge | Create Account", "register").ServeHTTP)
+	r.With(s.requireAppSession).Get("/app/repos", s.handleUIPage("Forge | Repositories", "repos").ServeHTTP)
+	r.With(s.requireAppSession).Get("/app/orgs", s.handleUIPage("Forge | Organizations", "orgs").ServeHTTP)
+	r.With(s.requireAppSession).Get("/app/keys", s.handleUIPage("Forge | SSH Keys", "keys").ServeHTTP)
+	r.With(s.requireAppSession).Get("/app/repos/{owner}/{repo}", s.handleUIRepositoryPage)
+	r.Handle("/app/assets/*", http.StripPrefix("/app/assets/", http.FileServer(http.FS(uiStaticFS))))
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Route("/auth", func(r chi.Router) {
@@ -129,6 +148,7 @@ func (s *Server) routes() http.Handler {
 		})
 
 		r.With(s.requireAuth).Get("/me", s.handleCurrentUser)
+		r.With(s.requireAuth).Get("/keys", s.handleListSSHKeys)
 		r.With(s.requireAuth).Post("/keys", s.handleCreateSSHKey)
 
 		r.With(s.requireAuth).Get("/orgs", s.handleListOrganizations)
@@ -136,6 +156,7 @@ func (s *Server) routes() http.Handler {
 		r.With(s.requireAuth).Post("/orgs/{org}/members", s.handleAddOrganizationMember)
 
 		r.With(s.requireAuth).Get("/repos", s.handleListRepositories)
+		r.With(s.requireAuth).Get("/repos/{owner}/{repo}", s.handleGetRepository)
 		r.With(s.requireAuth).Post("/repos", s.handleCreateRepository)
 		r.With(s.requireAuth).Delete("/repos/{owner}/{repo}", s.handleDeleteRepository)
 		r.With(s.requireAuth).Post("/repos/{owner}/{repo}/collaborators", s.handleAddRepositoryCollaborator)
@@ -297,6 +318,39 @@ func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.writeJSON(w, http.StatusOK, repoListResponse{Repositories: repositories})
+}
+
+func (s *Server) handleGetRepository(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		s.writeError(r, w, http.StatusUnauthorized, errors.New("authentication required"))
+		return
+	}
+
+	owner := chi.URLParam(r, "owner")
+	repoName := chi.URLParam(r, "repo")
+	repository, err := s.repositories.GetRepository(r.Context(), owner, repoName)
+	if err != nil {
+		s.writeError(r, w, http.StatusNotFound, errors.New("repository not found"))
+		return
+	}
+
+	canRead, err := s.repositories.CanRead(r.Context(), &user, repository)
+	if err != nil {
+		s.writeError(r, w, http.StatusInternalServerError, errors.New("failed to authorize repository access"))
+		return
+	}
+	if !canRead {
+		s.writeError(r, w, http.StatusForbidden, errors.New("repository read access required"))
+		return
+	}
+
+	httpCloneURL, sshCloneURL := s.cloneURLs(repository.Owner, repository.Name)
+	s.writeJSON(w, http.StatusOK, repositoryDetailResponse{
+		Repository:   repository,
+		HTTPCloneURL: httpCloneURL,
+		SSHCloneURL:  sshCloneURL,
+	})
 }
 
 func (s *Server) handleListOrganizations(w http.ResponseWriter, r *http.Request) {
@@ -625,6 +679,23 @@ func (s *Server) handleCreateSSHKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusCreated, key)
+}
+
+func (s *Server) handleListSSHKeys(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		s.writeError(r, w, http.StatusUnauthorized, errors.New("authentication required"))
+		return
+	}
+
+	keys, err := s.store.ListSSHKeysByUser(r.Context(), user.ID)
+	if err != nil {
+		s.logger.Error("list ssh keys", "error", err, "user_id", user.ID)
+		s.writeError(r, w, http.StatusInternalServerError, errors.New("failed to list ssh keys"))
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, sshKeyListResponse{Keys: keys})
 }
 
 func (s *Server) requireAuth(next http.Handler) http.Handler {

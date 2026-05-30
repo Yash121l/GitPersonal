@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	cryptossh "golang.org/x/crypto/ssh"
+
 	"github.com/yashlunawat/forge/internal/config"
 	"github.com/yashlunawat/forge/internal/repository"
 	"github.com/yashlunawat/forge/internal/store/memory"
@@ -285,6 +287,123 @@ func TestOrganizationAndCollaboratorLifecycle(t *testing.T) {
 	deleteOrgAsBob := performJSONRequest(t, app.Router(), http.MethodDelete, "/api/v1/repos/team/infra", nil, bobCookie)
 	if deleteOrgAsBob.Code != http.StatusForbidden {
 		t.Fatalf("expected org maintainer delete to be forbidden, got %d with body %s", deleteOrgAsBob.Code, deleteOrgAsBob.Body.String())
+	}
+}
+
+func TestRepositoryDetailsSSHKeysAndUIRoutes(t *testing.T) {
+	t.Parallel()
+
+	app, _ := newTestServer(t)
+
+	register := performJSONRequest(t, app.Router(), http.MethodPost, "/api/v1/auth/register", map[string]string{
+		"username": "yash",
+		"password": "correct horse battery staple",
+	}, nil)
+	if register.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, body = %s", register.Code, register.Body.String())
+	}
+	cookie := firstCookie(t, register.Result().Cookies(), "forge_session")
+
+	createRepo := performJSONRequest(t, app.Router(), http.MethodPost, "/api/v1/repos", map[string]string{
+		"name":           "forge",
+		"description":    "Self-hosted git platform",
+		"visibility":     "private",
+		"default_branch": "main",
+	}, cookie)
+	if createRepo.Code != http.StatusCreated {
+		t.Fatalf("create repo status = %d, body = %s", createRepo.Code, createRepo.Body.String())
+	}
+
+	sshPublicKey, _ := generateRSAKey(t)
+	addKey := performJSONRequest(t, app.Router(), http.MethodPost, "/api/v1/keys", map[string]string{
+		"name":       "laptop",
+		"public_key": string(cryptossh.MarshalAuthorizedKey(sshPublicKey)),
+	}, cookie)
+	if addKey.Code != http.StatusCreated {
+		t.Fatalf("add key status = %d, body = %s", addKey.Code, addKey.Body.String())
+	}
+
+	listKeys := performJSONRequest(t, app.Router(), http.MethodGet, "/api/v1/keys", nil, cookie)
+	if listKeys.Code != http.StatusOK {
+		t.Fatalf("list keys status = %d, body = %s", listKeys.Code, listKeys.Body.String())
+	}
+
+	var keysBody struct {
+		Keys []struct {
+			Name string `json:"name"`
+		} `json:"keys"`
+	}
+	if err := json.Unmarshal(listKeys.Body.Bytes(), &keysBody); err != nil {
+		t.Fatalf("decode keys response: %v", err)
+	}
+	if len(keysBody.Keys) != 1 || keysBody.Keys[0].Name != "laptop" {
+		t.Fatalf("unexpected keys payload: %+v", keysBody.Keys)
+	}
+
+	repoDetail := performJSONRequest(t, app.Router(), http.MethodGet, "/api/v1/repos/yash/forge", nil, cookie)
+	if repoDetail.Code != http.StatusOK {
+		t.Fatalf("repo detail status = %d, body = %s", repoDetail.Code, repoDetail.Body.String())
+	}
+
+	var detailBody struct {
+		HTTPCloneURL string `json:"http_clone_url"`
+		SSHCloneURL  string `json:"ssh_clone_url"`
+	}
+	if err := json.Unmarshal(repoDetail.Body.Bytes(), &detailBody); err != nil {
+		t.Fatalf("decode repo detail response: %v", err)
+	}
+	if detailBody.HTTPCloneURL == "" {
+		t.Fatal("expected http clone url to be present")
+	}
+	if detailBody.SSHCloneURL == "" {
+		t.Fatal("expected ssh clone url to be present")
+	}
+
+	loginPage := performJSONRequest(t, app.Router(), http.MethodGet, "/app/login", nil, nil)
+	if loginPage.Code != http.StatusOK || !bytes.Contains(loginPage.Body.Bytes(), []byte(`data-view="login"`)) {
+		t.Fatalf("unexpected login page response: %d %s", loginPage.Code, loginPage.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/app/repos", nil)
+	redirectRecorder := httptest.NewRecorder()
+	app.Router().ServeHTTP(redirectRecorder, req)
+	if redirectRecorder.Code != http.StatusFound {
+		t.Fatalf("expected unauthenticated app repos request to redirect, got %d", redirectRecorder.Code)
+	}
+	if location := redirectRecorder.Header().Get("Location"); location != "/app/login" {
+		t.Fatalf("unexpected redirect location: %s", location)
+	}
+
+	reposPageRequest := httptest.NewRequest(http.MethodGet, "/app/repos", nil)
+	reposPageRequest.AddCookie(cookie)
+	reposPage := httptest.NewRecorder()
+	app.Router().ServeHTTP(reposPage, reposPageRequest)
+	if reposPage.Code != http.StatusOK || !bytes.Contains(reposPage.Body.Bytes(), []byte(`data-view="repos"`)) {
+		t.Fatalf("unexpected repos page response: %d %s", reposPage.Code, reposPage.Body.String())
+	}
+
+	repoPageRequest := httptest.NewRequest(http.MethodGet, "/app/repos/yash/forge", nil)
+	repoPageRequest.AddCookie(cookie)
+	repoPage := httptest.NewRecorder()
+	app.Router().ServeHTTP(repoPage, repoPageRequest)
+	if repoPage.Code != http.StatusOK || !bytes.Contains(repoPage.Body.Bytes(), []byte(`data-view="repo"`)) {
+		t.Fatalf("unexpected repo page response: %d %s", repoPage.Code, repoPage.Body.String())
+	}
+	if !bytes.Contains(repoPage.Body.Bytes(), []byte(`data-repo-owner="yash"`)) {
+		t.Fatalf("expected repo page owner metadata, got %s", repoPage.Body.String())
+	}
+
+	assetRequest := httptest.NewRequest(http.MethodGet, "/app/assets/app.css", nil)
+	assetResponse := httptest.NewRecorder()
+	app.Router().ServeHTTP(assetResponse, assetRequest)
+	if assetResponse.Code != http.StatusOK {
+		t.Fatalf("expected app css asset to be served, got %d", assetResponse.Code)
+	}
+	if contentType := assetResponse.Header().Get("Content-Type"); contentType == "" || !bytes.Contains([]byte(contentType), []byte("text/css")) {
+		t.Fatalf("unexpected app css content type: %s", contentType)
+	}
+	if !bytes.Contains(assetResponse.Body.Bytes(), []byte("--bg:")) {
+		t.Fatalf("expected app css payload, got %s", assetResponse.Body.String())
 	}
 }
 

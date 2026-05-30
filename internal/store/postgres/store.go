@@ -181,6 +181,12 @@ INSERT INTO ssh_keys (user_id, name, public_key, fingerprint_sha256)
 VALUES ($1, $2, $3, $4)
 RETURNING id, user_id, name, public_key, fingerprint_sha256, created_at, last_used_at`
 
+	listSSHKeysByUserQuery = `
+SELECT id, user_id, name, public_key, fingerprint_sha256, created_at, last_used_at
+FROM ssh_keys
+WHERE user_id = $1
+ORDER BY created_at ASC`
+
 	getUserBySSHFingerprintQuery = `
 SELECT u.id, u.username, u.password_hash, u.role, u.created_at
 FROM ssh_keys k
@@ -760,6 +766,35 @@ func (s *Store) CreateSSHKey(ctx context.Context, params store.CreateSSHKeyParam
 		return store.SSHKey{}, err
 	}
 	return key, nil
+}
+
+func (s *Store) ListSSHKeysByUser(ctx context.Context, userID int64) ([]store.SSHKey, error) {
+	rows, err := s.db.QueryContext(ctx, listSSHKeysByUserQuery, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var keys []store.SSHKey
+	for rows.Next() {
+		var key store.SSHKey
+		if err := rows.Scan(
+			&key.ID,
+			&key.UserID,
+			&key.Name,
+			&key.PublicKey,
+			&key.FingerprintSHA256,
+			&key.CreatedAt,
+			&key.LastUsedAt,
+		); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return keys, nil
 }
 
 func (s *Store) GetUserBySSHFingerprint(ctx context.Context, fingerprint string) (store.User, error) {

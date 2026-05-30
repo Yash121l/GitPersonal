@@ -347,6 +347,9 @@ func newTestServer(t *testing.T) (*Server, *repository.Service) {
 		ShutdownTimeout:     time.Second,
 		RequestTimeout:      time.Second,
 		MaxRequestBodyBytes: 1 << 20,
+		SSHEnabled:          true,
+		SSHAddress:          ":2222",
+		SSHUser:             "git",
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	st := memory.NewStore()
