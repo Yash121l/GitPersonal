@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Forge Docs | Deployment</title>
+  <meta name="description" content="Deployment and self-hosting guide for Forge, including docker-compose, environment variables, ports, and operational notes.">
+  <link rel="stylesheet" href="../assets/site.css">
+  <script defer src="../assets/site.js"></script>
+</head>
+<body data-page="deployment">
+  <div class="site-shell">
+    <header class="topbar">
+      <a class="brand" href="../index.html">
+        <span class="brand-mark">F</span>
+        <span class="brand-copy">
+          <strong>Forge</strong>
+          <span>Deployment Guide</span>
+        </span>
+      </a>
+      <button class="menu-toggle" type="button" data-menu-toggle aria-expanded="false" aria-controls="site-nav">Menu</button>
+      <nav id="site-nav" class="site-nav" data-menu>
+        <a href="../index.html">Home</a>
+        <a href="./index.html">Docs</a>
+        <a href="./architecture.html">Architecture</a>
+        <a href="./api.html">API</a>
+        <a href="./data-model.html">Data Model</a>
+        <a href="./deployment.html">Deployment</a>
+        <a href="./testing.html">Testing</a>
+      </nav>
+    </header>
+
+    <main class="docs-layout">
+      <aside class="docs-sidebar">
+        <p class="eyebrow">Deployment</p>
+        <nav class="toc">
+          <a href="#stance">Self-Hosting Stance</a>
+          <a href="#quickstart">Quick Start</a>
+          <a href="#pages">GitHub Pages</a>
+          <a href="#compose">Compose Services</a>
+          <a href="#env">Environment Variables</a>
+          <a href="#ports">Ports And Volumes</a>
+          <a href="#ops">Operations Notes</a>
+          <a href="#troubleshooting">Troubleshooting</a>
+        </nav>
+      </aside>
+
+      <article class="docs-content">
+        <header class="docs-header">
+          <p class="eyebrow">Self-Hosting Guide</p>
+          <h1>Forge is written to be run by the person learning from it.</h1>
+          <p>
+            The deployment story is intentionally local-first. You can run it on your own machine, on an internal
+            lab server, or on a small VPS. The project is meant to teach the deployment edges of a Git host,
+            not outsource them away.
+          </p>
+        </header>
+
+        <section id="stance">
+          <h2>Self-Hosting Stance</h2>
+          <p>
+            Forge takes a clear position: self-hosting is not a compromise tier. For a student or small trusted group,
+            owning the deployment path is part of learning how the platform works. The project is documented to make
+            that ownership practical.
+          </p>
+        </section>
+
+        <section id="quickstart">
+          <h2>Quick Start</h2>
+          <ol class="numbered-list">
+            <li>Copy `.env.example` to `.env` if you are starting from a fresh clone, then adjust values as needed.</li>
+            <li>Run <code>docker-compose up --build -d</code>.</li>
+            <li>Check <code>docker-compose ps</code> until `forge` is healthy.</li>
+            <li>Verify <code>http://127.0.0.1:3000/readyz</code>.</li>
+            <li>Use HTTP Git on port <code>3000</code> and SSH Git on port <code>2222</code>.</li>
+          </ol>
+          <pre class="code-block"><code>docker-compose up --build -d
+docker-compose ps
+curl http://127.0.0.1:3000/readyz</code></pre>
+        </section>
+
+        <section id="pages">
+          <h2>GitHub Pages For The Documentation Site</h2>
+          <p>
+            The static website in <code>website/</code> can also be published through GitHub Pages. The repository
+            includes a GitHub Actions workflow that uploads the <code>website/</code> directory as the Pages artifact
+            and deploys it on pushes to <code>main</code>.
+          </p>
+          <p>
+            To use it, enable GitHub Pages in the repository settings and set the source to GitHub Actions. No build
+            step is required because the site is plain HTML, CSS, and JavaScript.
+          </p>
+        </section>
+
+        <section id="compose">
+          <h2>Compose Services</h2>
+          <table class="docs-table">
+            <thead>
+              <tr>
+                <th>Service</th>
+                <th>Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>forge</code></td>
+                <td>Main application process. Serves HTTP API, smart HTTP Git, and SSH Git transport.</td>
+              </tr>
+              <tr>
+                <td><code>db</code></td>
+                <td>PostgreSQL metadata store for users, sessions, repositories, and SSH keys.</td>
+              </tr>
+              <tr>
+                <td><code>redis</code></td>
+                <td>Reserved for future queue/session cache use. Present for the planned architecture.</td>
+              </tr>
+              <tr>
+                <td><code>mailpit</code></td>
+                <td>Local SMTP sink for future notification flows during development.</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="env">
+          <h2>Environment Variables</h2>
+          <table class="docs-table">
+            <thead>
+              <tr>
+                <th>Variable</th>
+                <th>Current role</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><code>FORGE_ENV</code></td><td>Runtime mode. Current values: development, test, production.</td></tr>
+              <tr><td><code>FORGE_ADDR</code></td><td>HTTP listen address.</td></tr>
+              <tr><td><code>FORGE_BASE_URL</code></td><td>External base URL used for secure-cookie and validation logic.</td></tr>
+              <tr><td><code>FORGE_SECRET</code></td><td>JWT signing secret. Production mode requires a strong non-default value.</td></tr>
+              <tr><td><code>FORGE_COOKIE_NAME</code></td><td>Session cookie name.</td></tr>
+              <tr><td><code>FORGE_SESSION_TTL</code></td><td>JWT/session lifetime.</td></tr>
+              <tr><td><code>FORGE_READ_TIMEOUT</code></td><td>HTTP read timeout.</td></tr>
+              <tr><td><code>FORGE_WRITE_TIMEOUT</code></td><td>HTTP write timeout.</td></tr>
+              <tr><td><code>FORGE_IDLE_TIMEOUT</code></td><td>HTTP idle timeout.</td></tr>
+              <tr><td><code>FORGE_SHUTDOWN_TIMEOUT</code></td><td>Graceful shutdown timeout.</td></tr>
+              <tr><td><code>FORGE_REQUEST_TIMEOUT</code></td><td>Per-request context timeout middleware.</td></tr>
+              <tr><td><code>FORGE_MAX_REQUEST_BODY_BYTES</code></td><td>Maximum accepted HTTP body size.</td></tr>
+              <tr><td><code>FORGE_REPOS_ROOT</code></td><td>Root directory for repository storage.</td></tr>
+              <tr><td><code>FORGE_DB_MAX_OPEN_CONNS</code></td><td>PostgreSQL pool maximum open connections.</td></tr>
+              <tr><td><code>FORGE_DB_MAX_IDLE_CONNS</code></td><td>PostgreSQL pool idle connections.</td></tr>
+              <tr><td><code>FORGE_DB_CONN_MAX_LIFETIME</code></td><td>Connection lifetime cap.</td></tr>
+              <tr><td><code>FORGE_DB_CONN_MAX_IDLE_TIME</code></td><td>Connection idle lifetime cap.</td></tr>
+              <tr><td><code>FORGE_SSH_ENABLED</code></td><td>Enables the SSH listener.</td></tr>
+              <tr><td><code>FORGE_SSH_ADDR</code></td><td>SSH listen address, defaulting to port 2222 in development.</td></tr>
+              <tr><td><code>FORGE_SSH_HOST_KEY_PATH</code></td><td>Path for the SSH host key. The server creates it if missing.</td></tr>
+              <tr><td><code>FORGE_SSH_USER</code></td><td>Expected SSH username, default `git`.</td></tr>
+              <tr><td><code>DATABASE_URL</code></td><td>PostgreSQL DSN. Required in production.</td></tr>
+              <tr><td><code>REDIS_URL</code></td><td>Reserved for future worker/cache integrations.</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="ports">
+          <h2>Ports And Volumes</h2>
+          <ul class="feature-list">
+            <li><strong>3000:</strong> HTTP API and smart HTTP Git transport</li>
+            <li><strong>2222:</strong> SSH Git transport</li>
+            <li><strong>5432:</strong> PostgreSQL</li>
+            <li><strong>6379:</strong> Redis</li>
+            <li><strong>1025 / 8025:</strong> Mailpit SMTP and web UI</li>
+          </ul>
+          <p>
+            Data is persisted in named Docker volumes. The Forge container entrypoint repairs ownership of the
+            mounted `/data` tree before dropping privileges to the non-root runtime user.
+          </p>
+        </section>
+
+        <section id="ops">
+          <h2>Operations Notes</h2>
+          <ul class="feature-list">
+            <li>Health uses <code>/readyz</code>, not only <code>/healthz</code>, because repository storage and database access both matter.</li>
+            <li>Database migrations are embedded and applied automatically at startup.</li>
+            <li>The container runtime was adjusted so `git-http-backend` exists in the image and smart HTTP works live.</li>
+            <li>Repository maintenance is scheduled after create/write operations rather than performed inline with user traffic.</li>
+            <li>Production mode enforces stronger config validation, including HTTPS base URL and a non-trivial secret.</li>
+          </ul>
+        </section>
+
+        <section id="troubleshooting">
+          <h2>Troubleshooting</h2>
+          <table class="docs-table">
+            <thead>
+              <tr>
+                <th>Symptom</th>
+                <th>Likely cause</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Container restarts on boot</td>
+                <td>Check `docker-compose logs forge`; most likely a permission or config validation failure.</td>
+              </tr>
+              <tr>
+                <td>Smart HTTP returns 502</td>
+                <td>Verify the runtime image contains `git-http-backend` and that the repository path exists under `/data/repos`.</td>
+              </tr>
+              <tr>
+                <td>SSH auth fails</td>
+                <td>Confirm the public key was registered through `POST /api/v1/keys` and use the correct SSH username.</td>
+              </tr>
+              <tr>
+                <td>Ready endpoint fails</td>
+                <td>Either PostgreSQL is unavailable or repository storage is not writable.</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+      </article>
+    </main>
+
+    <footer class="footer">
+      <div>
+        <strong>Forge Deployment</strong>
+        <p>Run it locally, understand every moving part, then decide how far to scale it.</p>
+      </div>
+      <div class="footer-links">
+        <a href="./index.html">Docs Hub</a>
+        <a href="./architecture.html">Architecture</a>
+        <a href="./api.html">API</a>
+        <a href="./testing.html">Testing</a>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

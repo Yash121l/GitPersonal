@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Forge | Self-Hosted Git for Learning and Ownership</title>
+  <meta name="description" content="Forge is a self-hostable Git platform built by Yash Lunawat as a learning project to understand how GitHub-like systems actually work.">
+  <link rel="stylesheet" href="./assets/site.css">
+  <script defer src="./assets/site.js"></script>
+</head>
+<body data-page="home">
+  <div class="site-shell">
+    <header class="topbar">
+      <a class="brand" href="./index.html">
+        <span class="brand-mark">F</span>
+        <span class="brand-copy">
+          <strong>Forge</strong>
+          <span>Self-host your code. Study the machine.</span>
+        </span>
+      </a>
+      <button class="menu-toggle" type="button" data-menu-toggle aria-expanded="false" aria-controls="site-nav">Menu</button>
+      <nav id="site-nav" class="site-nav" data-menu>
+        <a href="./index.html">Home</a>
+        <a href="./docs/index.html">Docs</a>
+        <a href="./docs/architecture.html">Architecture</a>
+        <a href="./docs/api.html">API</a>
+        <a href="./docs/data-model.html">Data Model</a>
+        <a href="./docs/deployment.html">Deployment</a>
+        <a href="./docs/testing.html">Testing</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Project documentation</p>
+          <h1>Forge is a self-hosted Git learning project with a deployable backend and full implementation notes.</h1>
+          <p class="lede">
+            This site documents how the current codebase works: authentication, repository storage,
+            Git transport over HTTP and SSH, background maintenance, local deployment, and the data model behind it.
+            The goal is to make the system understandable and easy to self-host.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="./docs/index.html">Read the docs</a>
+            <a class="button button-secondary" href="./docs/deployment.html">Deployment guide</a>
+          </div>
+        </div>
+        <aside class="hero-panel">
+          <div class="status-card">
+            <h2>Project summary</h2>
+            <ul class="clean-list">
+              <li><strong>Author:</strong> Yash Lunawat, India</li>
+              <li><strong>Purpose:</strong> learning how GitHub-style systems work by building one</li>
+              <li><strong>Current scope:</strong> backend, transport, storage, deployment, and docs</li>
+              <li><strong>Deployment model:</strong> self-hosted on your own machine or server</li>
+              <li><strong>Status:</strong> foundation implemented, product surface still incomplete</li>
+            </ul>
+          </div>
+        </aside>
+      </section>
+
+      <section class="section-grid">
+        <article class="callout callout-wide">
+          <p class="eyebrow">About the project</p>
+          <h2>This documentation is meant to be practical.</h2>
+          <p>
+            Forge is not documented as a marketing site. It is documented as an engineering project. The pages here
+            explain what is running today, how it is structured, and which parts are still missing before the system
+            becomes a broader Git hosting product.
+          </p>
+          <p>
+            Self-hosting is the default posture for the project. The website, deployment flow, and documentation are
+            written so the code can be studied and run without relying on external managed platforms.
+          </p>
+        </article>
+
+        <article class="card">
+          <p class="eyebrow">Current implementation</p>
+          <h3>Working backend foundation</h3>
+          <p>
+            The current codebase includes smart HTTP, SSH Git transport, persisted sessions, repository provisioning,
+            and background maintenance scheduling.
+          </p>
+        </article>
+
+        <article class="card">
+          <p class="eyebrow">Documentation coverage</p>
+          <h3>Project manual, not a brochure</h3>
+          <p>
+            The docs cover architecture, APIs, storage, deployment, and testing in detail, with each page tied to
+            the current implementation rather than a feature wishlist.
+          </p>
+        </article>
+
+        <article class="card">
+          <p class="eyebrow">What is next</p>
+          <h3>Still a partial product</h3>
+          <p>
+            The next layers are repository browsing, finer-grained permissions, organizations, collaboration features,
+            and the rest of the product UI.
+          </p>
+        </article>
+      </section>
+
+      <section class="section-grid">
+        <article class="card">
+          <p class="eyebrow">What is implemented today</p>
+          <h3>Implemented now</h3>
+          <ul class="feature-list">
+            <li>Go service with structured logging, graceful shutdown, config validation, and health endpoints</li>
+            <li>JWT cookie sessions with persisted session records and logout revocation</li>
+            <li>Repository provisioning on disk with sharded layout and atomic staging</li>
+            <li>Smart HTTP transport through <code>git-http-backend</code></li>
+            <li>SSH transport with stored public keys and <code>git-upload-pack</code> / <code>git-receive-pack</code></li>
+            <li>Background repository maintenance for size/index/commit-graph refresh</li>
+            <li>Local runtime verified through <code>docker-compose</code></li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <p class="eyebrow">Open work</p>
+          <h3>Not implemented yet</h3>
+          <ul class="feature-list">
+            <li>Web UI and documentation rendering inside the product itself</li>
+            <li>Pull requests, issues, organizations, and collaboration permissions</li>
+            <li>Rate limiting, CSRF, audit trails, richer authorization, and admin workflows</li>
+            <li>Webhook workers, CI runners, release flows, LFS, and search</li>
+          </ul>
+        </article>
+      </section>
+
+      <section class="timeline">
+        <div class="timeline-header">
+          <p class="eyebrow">Documentation map</p>
+          <h2>Documentation sections</h2>
+        </div>
+        <div class="timeline-grid">
+          <a class="timeline-card" href="./docs/index.html">
+            <span class="timeline-step">01</span>
+            <strong>Documentation Hub</strong>
+            <span>Product intent, status map, module index, and project glossary.</span>
+          </a>
+          <a class="timeline-card" href="./docs/architecture.html">
+            <span class="timeline-step">02</span>
+            <strong>Architecture</strong>
+            <span>Storage, transport, process model, request flows, and implementation details.</span>
+          </a>
+          <a class="timeline-card" href="./docs/api.html">
+            <span class="timeline-step">03</span>
+            <strong>API Reference</strong>
+            <span>JSON endpoints, auth modes, Git transport URLs, error contracts, and examples.</span>
+          </a>
+          <a class="timeline-card" href="./docs/data-model.html">
+            <span class="timeline-step">04</span>
+            <strong>Data Model</strong>
+            <span>Schema shape, ownership rules, storage boundaries, and current persistence gaps.</span>
+          </a>
+          <a class="timeline-card" href="./docs/deployment.html">
+            <span class="timeline-step">05</span>
+            <strong>Deployment</strong>
+            <span>Environment variables, `docker-compose`, ports, persistence, and operations.</span>
+          </a>
+          <a class="timeline-card" href="./docs/testing.html">
+            <span class="timeline-step">06</span>
+            <strong>Testing</strong>
+            <span>TDD posture, automated coverage, local runtime verification, and next test priorities.</span>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div>
+        <strong>Forge</strong>
+        <p>Project website and technical documentation for the Forge codebase.</p>
+      </div>
+      <div class="footer-links">
+        <a href="./docs/index.html">Documentation</a>
+        <a href="./docs/api.html">API Reference</a>
+        <a href="./docs/deployment.html">Self-Hosting Guide</a>
+        <a href="./docs/testing.html">Testing Guide</a>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

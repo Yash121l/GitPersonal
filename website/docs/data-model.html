@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Forge Docs | Data Model</title>
+  <meta name="description" content="Detailed Forge data model documentation covering PostgreSQL schema, filesystem storage, store interfaces, and current invariants.">
+  <link rel="stylesheet" href="../assets/site.css">
+  <script defer src="../assets/site.js"></script>
+</head>
+<body data-page="data-model">
+  <div class="site-shell">
+    <header class="topbar">
+      <a class="brand" href="../index.html">
+        <span class="brand-mark">F</span>
+        <span class="brand-copy">
+          <strong>Forge</strong>
+          <span>Data Model</span>
+        </span>
+      </a>
+      <button class="menu-toggle" type="button" data-menu-toggle aria-expanded="false" aria-controls="site-nav">Menu</button>
+      <nav id="site-nav" class="site-nav" data-menu>
+        <a href="../index.html">Home</a>
+        <a href="./index.html">Docs</a>
+        <a href="./architecture.html">Architecture</a>
+        <a href="./api.html">API</a>
+        <a href="./data-model.html">Data Model</a>
+        <a href="./deployment.html">Deployment</a>
+        <a href="./testing.html">Testing</a>
+      </nav>
+    </header>
+
+    <main class="docs-layout">
+      <aside class="docs-sidebar">
+        <p class="eyebrow">Data Model</p>
+        <nav class="toc">
+          <a href="#boundaries">Storage Boundaries</a>
+          <a href="#schema">Current Schema</a>
+          <a href="#repository">Repository Invariants</a>
+          <a href="#store">Store Interface</a>
+          <a href="#implementations">Store Implementations</a>
+          <a href="#gaps">Current Gaps</a>
+        </nav>
+      </aside>
+
+      <article class="docs-content">
+        <header class="docs-header">
+          <p class="eyebrow">Persistence Model</p>
+          <h1>Forge splits state deliberately between PostgreSQL metadata and Git-native filesystem storage.</h1>
+          <p>
+            This project does not force everything into one database and it does not pretend the filesystem is only
+            an implementation detail. A Git host has two truths: metadata in a relational store and repositories as
+            Git-native object databases on disk. Forge keeps those roles explicit.
+          </p>
+        </header>
+
+        <section id="boundaries">
+          <h2>Storage Boundaries</h2>
+          <table class="docs-table">
+            <thead>
+              <tr>
+                <th>Layer</th>
+                <th>What lives there</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>PostgreSQL</code></td>
+                <td>Users, sessions, repositories, SSH keys, and maintenance metadata.</td>
+              </tr>
+              <tr>
+                <td><code>/data/repos</code></td>
+                <td>Sharded bare Git repositories, staging directories, and trash directories.</td>
+              </tr>
+              <tr>
+                <td><code>/data/ssh</code></td>
+                <td>Generated or persisted SSH host key material for the Forge SSH listener.</td>
+              </tr>
+              <tr>
+                <td>In-memory store</td>
+                <td>Test and no-database fallback only; not a durable production backend.</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="schema">
+          <h2>Current Schema</h2>
+          <table class="docs-table">
+            <thead>
+              <tr>
+                <th>Table</th>
+                <th>Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>users</code></td>
+                <td>Core identity rows. Stores username, bcrypt password hash, role, and profile placeholders.</td>
+              </tr>
+              <tr>
+                <td><code>sessions</code></td>
+                <td>Revocable session rows keyed by token identifier with `expires_at` and optional `revoked_at`.</td>
+              </tr>
+              <tr>
+                <td><code>repositories</code></td>
+                <td>Repository metadata, ownership, visibility, default branch, repo path, size, and maintenance timestamps.</td>
+              </tr>
+              <tr>
+                <td><code>ssh_keys</code></td>
+                <td>Stored public keys with SHA-256 fingerprint uniqueness and `last_used_at` tracking.</td>
+              </tr>
+              <tr>
+                <td><code>organizations</code></td>
+                <td>Reserved for future org ownership. Present in schema, not yet exposed through the API.</td>
+              </tr>
+              <tr>
+                <td><code>org_members</code></td>
+                <td>Reserved for future org membership and role mapping.</td>
+              </tr>
+            </tbody>
+          </table>
+          <p>
+            Migration `000002_repository_maintenance` adds `last_indexed_at` and `last_maintained_at` to the
+            `repositories` table so background maintenance can leave a durable trace.
+          </p>
+        </section>
+
+        <section id="repository">
+          <h2>Repository Invariants</h2>
+          <ul class="feature-list">
+            <li>Every repository row must be owned by exactly one owner type: either `owner_user_id` or `owner_org_id`, but not both.</li>
+            <li>User-owned repository names are unique per owner case-insensitively through a partial unique index on `lower(name)`.</li>
+            <li>Organization-owned repository names have the same case-insensitive uniqueness rule through a separate partial unique index.</li>
+            <li>`repo_path` stores the actual filesystem path used by Git commands; the application does not recompute it from metadata at request time.</li>
+            <li>The current create flow only provisions user-owned repositories even though the schema is already shaped for organizations.</li>
+          </ul>
+          <p>
+            Filesystem paths are derived from a SHA-256 fanout of `owner/name`, using two one-byte hexadecimal prefix
+            directories before the owner and repository slug. This keeps large repository sets from collapsing into a
+            single hot directory.
+          </p>
+        </section>
+
+        <section id="store">
+          <h2>Store Interface</h2>
+          <p>
+            The `internal/store` package defines the application persistence contract. That contract includes:
+          </p>
+          <ul class="feature-list">
+            <li>User creation and lookup.</li>
+            <li>Repository create, lookup, list, delete, and stat updates.</li>
+            <li>Session create, lookup by token identifier, and revocation.</li>
+            <li>SSH key create, lookup by fingerprint, and `last_used_at` updates.</li>
+            <li>A repository lease hook, `WithRepositoryLease`, for mutation serialization.</li>
+            <li>A `Check` method for readiness probes.</li>
+          </ul>
+          <p>
+            This split is intentional. The HTTP server and repository service code depend on the interface, not on
+            PostgreSQL directly, which makes transport tests faster and keeps fallback behavior available.
+          </p>
+        </section>
+
+        <section id="implementations">
+          <h2>Store Implementations</h2>
+          <table class="docs-table">
+            <thead>
+              <tr>
+                <th>Implementation</th>
+                <th>What it does today</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>internal/store/memory</code></td>
+                <td>Uses Go maps and mutexes, including a per-repo mutex map for `WithRepositoryLease`. Ideal for tests and local no-DB runs.</td>
+              </tr>
+              <tr>
+                <td><code>internal/store/postgres</code></td>
+                <td>Persists users, sessions, repos, and keys in PostgreSQL. It is the real deployment backend, but repository leasing is not yet implemented there.</td>
+              </tr>
+            </tbody>
+          </table>
+          <p>
+            There is also a helper `RepositoryLeaseKey` built from normalized `owner/name` using FNV-1a hashing.
+            That makes the intended lock identity explicit even though the PostgreSQL implementation has not yet
+            turned it into an advisory lock or other cross-process lease.
+          </p>
+        </section>
+
+        <section id="gaps">
+          <h2>Current Gaps</h2>
+          <ul class="feature-list">
+            <li>Organizations exist in the schema but have no HTTP routes, authorization model, or repository ownership flow yet.</li>
+            <li>The repository authorization model lives mostly in application code and is currently simple: public read or owner write.</li>
+            <li>The PostgreSQL store does not yet serialize repository mutations across processes.</li>
+            <li>No audit tables, webhook tables, CI tables, or issue/PR tables are present in the live implementation yet.</li>
+            <li>Redis is present in deployment but not yet part of the active persistence or queue path.</li>
+          </ul>
+        </section>
+      </article>
+    </main>
+
+    <footer class="footer">
+      <div>
+        <strong>Forge Data Model</strong>
+        <p>State is where correctness starts: what is on disk, what is in Postgres, and what is still a future layer.</p>
+      </div>
+      <div class="footer-links">
+        <a href="./index.html">Docs Hub</a>
+        <a href="./architecture.html">Architecture</a>
+        <a href="./api.html">API</a>
+        <a href="./deployment.html">Deployment</a>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>
