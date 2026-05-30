@@ -147,11 +147,21 @@ func (s *Server) dispatchExec(ctx context.Context, conn *ssh.ServerConn, channel
 		return err
 	}
 	if writeAccess {
-		if !s.repositories.CanWrite(&user, repositoryMeta) {
+		canWrite, err := s.repositories.CanWrite(ctx, &user, repositoryMeta)
+		if err != nil {
+			return err
+		}
+		if !canWrite {
 			return store.ErrForbidden
 		}
-	} else if !s.repositories.CanRead(&user, repositoryMeta) {
-		return store.ErrForbidden
+	} else {
+		canRead, err := s.repositories.CanRead(ctx, &user, repositoryMeta)
+		if err != nil {
+			return err
+		}
+		if !canRead {
+			return store.ErrForbidden
+		}
 	}
 
 	cmd := exec.CommandContext(ctx, gitCommand, repositoryMeta.RepoPath)

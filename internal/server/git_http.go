@@ -36,15 +36,27 @@ func (s *Server) handleGitHTTP(w http.ResponseWriter, r *http.Request) {
 	currentUser, _ := s.authenticateRequest(r)
 	writeAccess := isGitWriteRequest(r)
 	if writeAccess {
-		if !s.repositories.CanWrite(currentUser, repository) {
+		canWrite, err := s.repositories.CanWrite(r.Context(), currentUser, repository)
+		if err != nil {
+			s.writeError(r, w, http.StatusInternalServerError, errInternal)
+			return
+		}
+		if !canWrite {
 			w.Header().Set("WWW-Authenticate", gitBasicRealm)
 			s.writeError(r, w, http.StatusUnauthorized, errors.New("git write requires valid credentials"))
 			return
 		}
-	} else if !s.repositories.CanRead(currentUser, repository) {
-		w.Header().Set("WWW-Authenticate", gitBasicRealm)
-		s.writeError(r, w, http.StatusUnauthorized, errors.New("git read requires valid credentials"))
-		return
+	} else {
+		canRead, err := s.repositories.CanRead(r.Context(), currentUser, repository)
+		if err != nil {
+			s.writeError(r, w, http.StatusInternalServerError, errInternal)
+			return
+		}
+		if !canRead {
+			w.Header().Set("WWW-Authenticate", gitBasicRealm)
+			s.writeError(r, w, http.StatusUnauthorized, errors.New("git read requires valid credentials"))
+			return
+		}
 	}
 
 	relativeRepoPath, err := s.repositories.RelativeRepoPath(repository)

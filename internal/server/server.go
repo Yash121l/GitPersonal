@@ -53,15 +53,33 @@ type loginRequest struct {
 }
 
 type createRepoRequest struct {
+	Owner         string `json:"owner"`
+	OwnerType     string `json:"owner_type"`
 	Name          string `json:"name"`
 	Description   string `json:"description"`
 	Visibility    string `json:"visibility"`
 	DefaultBranch string `json:"default_branch"`
 }
 
+type createOrganizationRequest struct {
+	Slug        string `json:"slug"`
+	DisplayName string `json:"display_name"`
+	Description string `json:"description"`
+}
+
+type addOrganizationMemberRequest struct {
+	Username string `json:"username"`
+	Role     string `json:"role"`
+}
+
 type createSSHKeyRequest struct {
 	Name      string `json:"name"`
 	PublicKey string `json:"public_key"`
+}
+
+type addRepositoryCollaboratorRequest struct {
+	Username string `json:"username"`
+	Role     string `json:"role"`
 }
 
 type currentUserResponse struct {
@@ -70,6 +88,10 @@ type currentUserResponse struct {
 
 type repoListResponse struct {
 	Repositories []store.Repository `json:"repositories"`
+}
+
+type organizationListResponse struct {
+	Organizations []store.OrganizationMembership `json:"organizations"`
 }
 
 func New(cfg config.Config, logger *slog.Logger, st store.Store, repositories *repository.Service) (*Server, error) {
@@ -109,9 +131,14 @@ func (s *Server) routes() http.Handler {
 		r.With(s.requireAuth).Get("/me", s.handleCurrentUser)
 		r.With(s.requireAuth).Post("/keys", s.handleCreateSSHKey)
 
+		r.With(s.requireAuth).Get("/orgs", s.handleListOrganizations)
+		r.With(s.requireAuth).Post("/orgs", s.handleCreateOrganization)
+		r.With(s.requireAuth).Post("/orgs/{org}/members", s.handleAddOrganizationMember)
+
 		r.With(s.requireAuth).Get("/repos", s.handleListRepositories)
 		r.With(s.requireAuth).Post("/repos", s.handleCreateRepository)
 		r.With(s.requireAuth).Delete("/repos/{owner}/{repo}", s.handleDeleteRepository)
+		r.With(s.requireAuth).Post("/repos/{owner}/{repo}/collaborators", s.handleAddRepositoryCollaborator)
 	})
 
 	r.Handle("/git/*", http.HandlerFunc(s.handleGitHTTP))
@@ -254,14 +281,133 @@ func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	repositories, err := s.store.ListRepositoriesByOwner(r.Context(), user.Username)
+	var (
+		repositories []store.Repository
+		err          error
+	)
+	if user.Role == store.OrganizationRoleOwner {
+		repositories, err = s.store.ListRepositories(r.Context())
+	} else {
+		repositories, err = s.store.ListRepositoriesForUser(r.Context(), user.ID)
+	}
 	if err != nil {
-		s.logger.Error("list repositories", "error", err, "owner", user.Username)
+		s.logger.Error("list repositories", "error", err, "user_id", user.ID)
 		s.writeError(r, w, http.StatusInternalServerError, errors.New("failed to list repositories"))
 		return
 	}
 
 	s.writeJSON(w, http.StatusOK, repoListResponse{Repositories: repositories})
+}
+
+func (s *Server) handleListOrganizations(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		s.writeError(r, w, http.StatusUnauthorized, errors.New("authentication required"))
+		return
+	}
+
+	organizations, err := s.store.ListOrganizationsByMember(r.Context(), user.ID)
+	if err != nil {
+		s.logger.Error("list organizations", "error", err, "user_id", user.ID)
+		s.writeError(r, w, http.StatusInternalServerError, errors.New("failed to list organizations"))
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, organizationListResponse{Organizations: organizations})
+}
+
+func (s *Server) handleCreateOrganization(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		s.writeError(r, w, http.StatusUnauthorized, errors.New("authentication required"))
+		return
+	}
+
+	var req createOrganizationRequest
+	if err := s.decodeJSON(r, &req); err != nil {
+		s.writeError(r, w, http.StatusBadRequest, err)
+		return
+	}
+
+	req.Slug = strings.TrimSpace(req.Slug)
+	req.DisplayName = strings.TrimSpace(req.DisplayName)
+	if err := validateUsername(req.Slug); err != nil {
+		s.writeError(r, w, http.StatusBadRequest, err)
+		return
+	}
+	if req.DisplayName == "" {
+		req.DisplayName = req.Slug
+	}
+
+	organization, err := s.store.CreateOrganization(r.Context(), store.CreateOrganizationParams{
+		Slug:        req.Slug,
+		DisplayName: req.DisplayName,
+		Description: req.Description,
+		CreatedBy:   user.ID,
+	})
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, store.ErrAlreadyExists) {
+			status = http.StatusConflict
+		}
+		s.writeError(r, w, status, err)
+		return
+	}
+
+	s.writeJSON(w, http.StatusCreated, organization)
+}
+
+func (s *Server) handleAddOrganizationMember(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		s.writeError(r, w, http.StatusUnauthorized, errors.New("authentication required"))
+		return
+	}
+
+	orgSlug := chi.URLParam(r, "org")
+	membership, err := s.store.GetOrganizationMembership(r.Context(), orgSlug, user.ID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.writeError(r, w, http.StatusInternalServerError, errors.New("failed to load organization membership"))
+		return
+	}
+	if user.Role != store.OrganizationRoleOwner && membership.Role != store.OrganizationRoleOwner {
+		s.writeError(r, w, http.StatusForbidden, errors.New("only organization owners can add members"))
+		return
+	}
+
+	var req addOrganizationMemberRequest
+	if err := s.decodeJSON(r, &req); err != nil {
+		s.writeError(r, w, http.StatusBadRequest, err)
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+
+	role, err := normalizeOrganizationRole(req.Role)
+	if err != nil {
+		s.writeError(r, w, http.StatusBadRequest, errors.New("organization role must be member, maintainer, or owner"))
+		return
+	}
+
+	added, err := s.store.AddOrganizationMember(r.Context(), store.AddOrganizationMemberParams{
+		OrganizationSlug: orgSlug,
+		Username:         req.Username,
+		Role:             role,
+	})
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, store.ErrAlreadyExists):
+			status = http.StatusConflict
+		case errors.Is(err, store.ErrNotFound):
+			status = http.StatusNotFound
+		case errors.Is(err, store.ErrInvalidArgument):
+			status = http.StatusBadRequest
+		}
+		s.writeError(r, w, status, err)
+		return
+	}
+
+	s.writeJSON(w, http.StatusCreated, added)
 }
 
 func (s *Server) handleCreateRepository(w http.ResponseWriter, r *http.Request) {
@@ -278,6 +424,8 @@ func (s *Server) handleCreateRepository(w http.ResponseWriter, r *http.Request) 
 	}
 
 	req.Name = strings.TrimSpace(req.Name)
+	req.Owner = strings.TrimSpace(req.Owner)
+	req.OwnerType = normalizeOwnerType(req.OwnerType)
 	req.Visibility = normalizeVisibility(req.Visibility)
 	req.DefaultBranch = strings.TrimSpace(req.DefaultBranch)
 
@@ -292,9 +440,38 @@ func (s *Server) handleCreateRepository(w http.ResponseWriter, r *http.Request) 
 		s.writeError(r, w, http.StatusBadRequest, errors.New("visibility must be public or private"))
 		return
 	}
+	if req.OwnerType != store.OwnerTypeUser && req.OwnerType != store.OwnerTypeOrganization {
+		s.writeError(r, w, http.StatusBadRequest, errors.New("owner_type must be user or organization"))
+		return
+	}
+	if req.OwnerType == store.OwnerTypeUser {
+		if req.Owner == "" {
+			req.Owner = user.Username
+		}
+		if !strings.EqualFold(req.Owner, user.Username) && user.Role != store.OrganizationRoleOwner {
+			s.writeError(r, w, http.StatusForbidden, errors.New("cannot create repository for another user"))
+			return
+		}
+	}
+	if req.OwnerType == store.OwnerTypeOrganization {
+		if req.Owner == "" {
+			s.writeError(r, w, http.StatusBadRequest, errors.New("organization-owned repositories require an owner slug"))
+			return
+		}
+		membership, err := s.store.GetOrganizationMembership(r.Context(), req.Owner, user.ID)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			s.writeError(r, w, http.StatusInternalServerError, errors.New("failed to load organization membership"))
+			return
+		}
+		if user.Role != store.OrganizationRoleOwner && membership.Role != store.OrganizationRoleOwner && membership.Role != store.OrganizationRoleMaintainer {
+			s.writeError(r, w, http.StatusForbidden, errors.New("organization repository creation requires maintainer or owner access"))
+			return
+		}
+	}
 
 	repository, err := s.repositories.CreateRepository(r.Context(), store.CreateRepositoryParams{
-		Owner:         user.Username,
+		Owner:         req.Owner,
+		OwnerType:     req.OwnerType,
 		Name:          req.Name,
 		Description:   req.Description,
 		Visibility:    req.Visibility,
@@ -321,8 +498,18 @@ func (s *Server) handleDeleteRepository(w http.ResponseWriter, r *http.Request) 
 
 	owner := chi.URLParam(r, "owner")
 	repo := chi.URLParam(r, "repo")
-	if !strings.EqualFold(owner, user.Username) && user.Role != "owner" {
-		s.writeError(r, w, http.StatusForbidden, errors.New("cannot delete repository owned by another user"))
+	repository, err := s.repositories.GetRepository(r.Context(), owner, repo)
+	if err != nil {
+		s.writeError(r, w, http.StatusNotFound, errors.New("repository not found"))
+		return
+	}
+	canAdmin, err := s.repositories.CanAdmin(r.Context(), &user, repository)
+	if err != nil {
+		s.writeError(r, w, http.StatusInternalServerError, errors.New("failed to authorize repository access"))
+		return
+	}
+	if !canAdmin {
+		s.writeError(r, w, http.StatusForbidden, errors.New("repository admin access required"))
 		return
 	}
 
@@ -336,6 +523,67 @@ func (s *Server) handleDeleteRepository(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleAddRepositoryCollaborator(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		s.writeError(r, w, http.StatusUnauthorized, errors.New("authentication required"))
+		return
+	}
+
+	owner := chi.URLParam(r, "owner")
+	repoName := chi.URLParam(r, "repo")
+	repository, err := s.repositories.GetRepository(r.Context(), owner, repoName)
+	if err != nil {
+		s.writeError(r, w, http.StatusNotFound, errors.New("repository not found"))
+		return
+	}
+
+	canAdmin, err := s.repositories.CanAdmin(r.Context(), &user, repository)
+	if err != nil {
+		s.writeError(r, w, http.StatusInternalServerError, errors.New("failed to authorize repository access"))
+		return
+	}
+	if !canAdmin {
+		s.writeError(r, w, http.StatusForbidden, errors.New("repository admin access required"))
+		return
+	}
+
+	var req addRepositoryCollaboratorRequest
+	if err := s.decodeJSON(r, &req); err != nil {
+		s.writeError(r, w, http.StatusBadRequest, err)
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+
+	role, err := normalizeRepositoryRole(req.Role)
+	if err != nil {
+		s.writeError(r, w, http.StatusBadRequest, errors.New("repository role must be read, write, or admin"))
+		return
+	}
+
+	collaborator, err := s.store.AddRepositoryCollaborator(r.Context(), store.AddRepositoryCollaboratorParams{
+		Owner:    owner,
+		RepoName: repoName,
+		Username: req.Username,
+		Role:     role,
+	})
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, store.ErrAlreadyExists):
+			status = http.StatusConflict
+		case errors.Is(err, store.ErrNotFound):
+			status = http.StatusNotFound
+		case errors.Is(err, store.ErrInvalidArgument):
+			status = http.StatusBadRequest
+		}
+		s.writeError(r, w, status, err)
+		return
+	}
+
+	s.writeJSON(w, http.StatusCreated, collaborator)
 }
 
 func (s *Server) handleCreateSSHKey(w http.ResponseWriter, r *http.Request) {
@@ -473,6 +721,43 @@ func validateRepositoryName(name string) error {
 		return errors.New("repository name contains invalid characters")
 	}
 	return nil
+}
+
+func normalizeOwnerType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", store.OwnerTypeUser:
+		return store.OwnerTypeUser
+	case store.OwnerTypeOrganization:
+		return store.OwnerTypeOrganization
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func normalizeOrganizationRole(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case store.OrganizationRoleMember:
+		return store.OrganizationRoleMember, nil
+	case store.OrganizationRoleMaintainer:
+		return store.OrganizationRoleMaintainer, nil
+	case store.OrganizationRoleOwner:
+		return store.OrganizationRoleOwner, nil
+	default:
+		return "", store.ErrInvalidArgument
+	}
+}
+
+func normalizeRepositoryRole(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case store.RepositoryRoleRead:
+		return store.RepositoryRoleRead, nil
+	case store.RepositoryRoleWrite:
+		return store.RepositoryRoleWrite, nil
+	case store.RepositoryRoleAdmin:
+		return store.RepositoryRoleAdmin, nil
+	default:
+		return "", store.ErrInvalidArgument
+	}
 }
 
 func (s *Server) authenticateRequest(r *http.Request) (*store.User, error) {

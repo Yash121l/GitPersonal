@@ -10,6 +10,12 @@ import (
 	"github.com/yashlunawat/forge/internal/store"
 )
 
+type Permissions struct {
+	CanRead  bool
+	CanWrite bool
+	CanAdmin bool
+}
+
 type Service struct {
 	logger      *slog.Logger
 	store       store.Store
@@ -111,21 +117,82 @@ func (s *Service) RelativeRepoPath(repository store.Repository) (string, error) 
 	return s.provisioner.RelativeRepoPath(repository.RepoPath)
 }
 
-func (s *Service) CanRead(user *store.User, repository store.Repository) bool {
+func (s *Service) Permissions(ctx context.Context, user *store.User, repository store.Repository) (Permissions, error) {
+	permissions := Permissions{}
+
 	if repository.Visibility == "public" {
-		return true
+		permissions.CanRead = true
 	}
 	if user == nil {
-		return false
+		return permissions, nil
 	}
-	return strings.EqualFold(user.Username, repository.Owner) || user.Role == "owner"
+	if user.Role == store.OrganizationRoleOwner {
+		return Permissions{CanRead: true, CanWrite: true, CanAdmin: true}, nil
+	}
+
+	if repository.OwnerType == store.OwnerTypeUser && strings.EqualFold(user.Username, repository.Owner) {
+		return Permissions{CanRead: true, CanWrite: true, CanAdmin: true}, nil
+	}
+
+	if repository.OwnerType == store.OwnerTypeOrganization {
+		membership, err := s.store.GetOrganizationMembership(ctx, repository.Owner, user.ID)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return Permissions{}, err
+		}
+		switch membership.Role {
+		case store.OrganizationRoleOwner:
+			permissions.CanRead = true
+			permissions.CanWrite = true
+			permissions.CanAdmin = true
+		case store.OrganizationRoleMaintainer:
+			permissions.CanRead = true
+			permissions.CanWrite = true
+		case store.OrganizationRoleMember:
+			permissions.CanRead = true
+		}
+	}
+
+	collaborator, err := s.store.GetRepositoryCollaborator(ctx, repository.Owner, repository.Name, user.ID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return Permissions{}, err
+	}
+	switch collaborator.Role {
+	case store.RepositoryRoleAdmin:
+		permissions.CanRead = true
+		permissions.CanWrite = true
+		permissions.CanAdmin = true
+	case store.RepositoryRoleWrite:
+		permissions.CanRead = true
+		permissions.CanWrite = true
+	case store.RepositoryRoleRead:
+		permissions.CanRead = true
+	}
+
+	return permissions, nil
 }
 
-func (s *Service) CanWrite(user *store.User, repository store.Repository) bool {
-	if user == nil {
-		return false
+func (s *Service) CanRead(ctx context.Context, user *store.User, repository store.Repository) (bool, error) {
+	permissions, err := s.Permissions(ctx, user, repository)
+	if err != nil {
+		return false, err
 	}
-	return strings.EqualFold(user.Username, repository.Owner) || user.Role == "owner"
+	return permissions.CanRead, nil
+}
+
+func (s *Service) CanWrite(ctx context.Context, user *store.User, repository store.Repository) (bool, error) {
+	permissions, err := s.Permissions(ctx, user, repository)
+	if err != nil {
+		return false, err
+	}
+	return permissions.CanWrite, nil
+}
+
+func (s *Service) CanAdmin(ctx context.Context, user *store.User, repository store.Repository) (bool, error) {
+	permissions, err := s.Permissions(ctx, user, repository)
+	if err != nil {
+		return false, err
+	}
+	return permissions.CanAdmin, nil
 }
 
 func (s *Service) ScheduleMaintenance(repository store.Repository) {

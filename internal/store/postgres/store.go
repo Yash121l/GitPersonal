@@ -28,21 +28,71 @@ SELECT id, username, password_hash, role, created_at
 FROM users
 WHERE id = $1`
 
+	createOrganizationQuery = `
+INSERT INTO organizations (slug, display_name, description, created_by)
+VALUES ($1, $2, $3, $4)
+RETURNING id, slug, display_name, description, created_by, created_at`
+
+	getOrganizationBySlugQuery = `
+SELECT id, slug, display_name, description, created_by, created_at
+FROM organizations
+WHERE lower(slug) = lower($1)`
+
+	listOrganizationsByMemberQuery = `
+SELECT
+	o.id,
+	o.slug,
+	o.display_name,
+	m.user_id,
+	u.username,
+	m.role,
+	m.created_at
+FROM org_members m
+JOIN organizations o ON o.id = m.organization_id
+JOIN users u ON u.id = m.user_id
+WHERE m.user_id = $1
+ORDER BY lower(o.slug) ASC`
+
+	addOrganizationMemberQuery = `
+INSERT INTO org_members (organization_id, user_id, role)
+VALUES ($1, $2, $3)
+RETURNING created_at`
+
+	getOrganizationMembershipQuery = `
+SELECT
+	o.id,
+	o.slug,
+	o.display_name,
+	m.user_id,
+	u.username,
+	m.role,
+	m.created_at
+FROM org_members m
+JOIN organizations o ON o.id = m.organization_id
+JOIN users u ON u.id = m.user_id
+WHERE lower(o.slug) = lower($1)
+  AND m.user_id = $2`
+
 	createRepositoryQuery = `
 INSERT INTO repositories (
 	owner_user_id,
+	owner_org_id,
 	name,
 	description,
 	visibility,
 	default_branch,
 	repo_path
-) VALUES ($1, $2, $3, $4, $5, $6)
+) VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING id, name, description, visibility, default_branch, is_archived, repo_path, size_bytes, last_indexed_at, last_maintained_at, created_at, updated_at`
 
-	getRepositoryByOwnerAndNameQuery = `
+	repositorySelectClause = `
 SELECT
 	r.id,
-	u.username,
+	COALESCE(u.username, o.slug) AS owner,
+	CASE
+		WHEN r.owner_org_id IS NOT NULL THEN 'organization'
+		ELSE 'user'
+	END AS owner_type,
 	r.name,
 	r.description,
 	r.visibility,
@@ -55,15 +105,36 @@ SELECT
 	r.created_at,
 	r.updated_at
 FROM repositories r
-JOIN users u ON u.id = r.owner_user_id
-WHERE lower(u.username) = lower($1)
+LEFT JOIN users u ON u.id = r.owner_user_id
+LEFT JOIN organizations o ON o.id = r.owner_org_id`
+
+	getRepositoryByOwnerAndNameQuery = repositorySelectClause + `
+WHERE lower(COALESCE(u.username, o.slug)) = lower($1)
   AND lower(r.name) = lower($2)
 LIMIT 1`
 
-	listRepositoriesByOwnerQuery = `
-SELECT
+	listRepositoriesByOwnerQuery = repositorySelectClause + `
+WHERE lower(COALESCE(u.username, o.slug)) = lower($1)
+ORDER BY lower(COALESCE(u.username, o.slug)) ASC, owner_type ASC, lower(r.name) ASC`
+
+	listRepositoriesQuery = repositorySelectClause + `
+ORDER BY lower(COALESCE(u.username, o.slug)) ASC, owner_type ASC, lower(r.name) ASC`
+
+	listRepositoriesForUserQuery = repositorySelectClause + `
+LEFT JOIN org_members om
+	ON om.organization_id = r.owner_org_id
+	AND om.user_id = $1
+LEFT JOIN repo_collaborators rc
+	ON rc.repository_id = r.id
+	AND rc.user_id = $1
+WHERE r.owner_user_id = $1
+   OR om.user_id IS NOT NULL
+   OR rc.user_id IS NOT NULL
+GROUP BY
 	r.id,
 	u.username,
+	o.slug,
+	r.owner_org_id,
 	r.name,
 	r.description,
 	r.visibility,
@@ -75,48 +146,20 @@ SELECT
 	r.last_maintained_at,
 	r.created_at,
 	r.updated_at
-FROM repositories r
-JOIN users u ON u.id = r.owner_user_id
-WHERE lower(u.username) = lower($1)
-ORDER BY r.name ASC`
+ORDER BY lower(COALESCE(u.username, o.slug)) ASC, owner_type ASC, lower(r.name) ASC`
 
-	listRepositoriesQuery = `
-SELECT
-	r.id,
-	u.username,
-	r.name,
-	r.description,
-	r.visibility,
-	r.default_branch,
-	r.is_archived,
-	r.repo_path,
-	r.size_bytes,
-	r.last_indexed_at,
-	r.last_maintained_at,
-	r.created_at,
-	r.updated_at
-FROM repositories r
-JOIN users u ON u.id = r.owner_user_id
-ORDER BY u.username ASC, r.name ASC`
-
-	updateRepositoryStatsQuery = `
-UPDATE repositories r
+	updateRepositoryStatsByIDQuery = `
+UPDATE repositories
 SET
-	size_bytes = $3,
-	last_indexed_at = COALESCE($4, last_indexed_at),
-	last_maintained_at = COALESCE($5, last_maintained_at),
+	size_bytes = $2,
+	last_indexed_at = COALESCE($3, last_indexed_at),
+	last_maintained_at = COALESCE($4, last_maintained_at),
 	updated_at = NOW()
-FROM users u
-WHERE r.owner_user_id = u.id
-  AND lower(u.username) = lower($1)
-  AND lower(r.name) = lower($2)`
+WHERE id = $1`
 
-	deleteRepositoryQuery = `
-DELETE FROM repositories r
-USING users u
-WHERE r.owner_user_id = u.id
-  AND lower(u.username) = lower($1)
-  AND lower(r.name) = lower($2)`
+	deleteRepositoryByIDQuery = `
+DELETE FROM repositories
+WHERE id = $1`
 
 	createSessionQuery = `
 INSERT INTO sessions (user_id, token_id, expires_at)
@@ -149,6 +192,32 @@ UPDATE ssh_keys
 SET last_used_at = $2
 WHERE fingerprint_sha256 = $1`
 
+	createRepositoryCollaboratorQuery = `
+INSERT INTO repo_collaborators (repository_id, user_id, role)
+VALUES ($1, $2, $3)
+RETURNING created_at`
+
+	getRepositoryCollaboratorQuery = `
+SELECT rc.repository_id, rc.user_id, u.username, rc.role, rc.created_at
+FROM repo_collaborators rc
+JOIN users u ON u.id = rc.user_id
+WHERE rc.repository_id = $1
+  AND rc.user_id = $2`
+
+	organizationSlugExistsQuery = `
+SELECT EXISTS (
+	SELECT 1
+	FROM organizations
+	WHERE lower(slug) = lower($1)
+)`
+
+	usernameExistsQuery = `
+SELECT EXISTS (
+	SELECT 1
+	FROM users
+	WHERE lower(username) = lower($1)
+)`
+
 	acquireRepositoryLeaseQuery = `
 SELECT pg_advisory_xact_lock($1)`
 )
@@ -162,8 +231,16 @@ func NewStore(db *sql.DB) *Store {
 }
 
 func (s *Store) CreateUser(ctx context.Context, username, passwordHash, role string) (store.User, error) {
+	collides, err := s.organizationSlugExists(ctx, username)
+	if err != nil {
+		return store.User{}, err
+	}
+	if collides {
+		return store.User{}, store.ErrAlreadyExists
+	}
+
 	var user store.User
-	err := s.db.QueryRowContext(ctx, createUserQuery, username, passwordHash, role).Scan(
+	err = s.db.QueryRowContext(ctx, createUserQuery, username, passwordHash, role).Scan(
 		&user.ID,
 		&user.Username,
 		&user.PasswordHash,
@@ -218,17 +295,207 @@ func (s *Store) GetUserByUsername(ctx context.Context, username string) (store.U
 	return user, nil
 }
 
+func (s *Store) CreateOrganization(ctx context.Context, params store.CreateOrganizationParams) (store.Organization, error) {
+	collides, err := s.usernameExists(ctx, params.Slug)
+	if err != nil {
+		return store.Organization{}, err
+	}
+	if collides {
+		return store.Organization{}, store.ErrAlreadyExists
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return store.Organization{}, err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	var organization store.Organization
+	err = tx.QueryRowContext(
+		ctx,
+		createOrganizationQuery,
+		params.Slug,
+		params.DisplayName,
+		params.Description,
+		params.CreatedBy,
+	).Scan(
+		&organization.ID,
+		&organization.Slug,
+		&organization.DisplayName,
+		&organization.Description,
+		&organization.CreatedBy,
+		&organization.CreatedAt,
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return store.Organization{}, store.ErrAlreadyExists
+		}
+		return store.Organization{}, err
+	}
+
+	if err := tx.QueryRowContext(
+		ctx,
+		addOrganizationMemberQuery,
+		organization.ID,
+		params.CreatedBy,
+		store.OrganizationRoleOwner,
+	).Scan(new(time.Time)); err != nil {
+		if isUniqueViolation(err) {
+			return store.Organization{}, store.ErrAlreadyExists
+		}
+		return store.Organization{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return store.Organization{}, err
+	}
+
+	return organization, nil
+}
+
+func (s *Store) GetOrganizationBySlug(ctx context.Context, slug string) (store.Organization, error) {
+	var organization store.Organization
+	err := s.db.QueryRowContext(ctx, getOrganizationBySlugQuery, slug).Scan(
+		&organization.ID,
+		&organization.Slug,
+		&organization.DisplayName,
+		&organization.Description,
+		&organization.CreatedBy,
+		&organization.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return store.Organization{}, store.ErrNotFound
+		}
+		return store.Organization{}, err
+	}
+	return organization, nil
+}
+
+func (s *Store) ListOrganizationsByMember(ctx context.Context, userID int64) ([]store.OrganizationMembership, error) {
+	rows, err := s.db.QueryContext(ctx, listOrganizationsByMemberQuery, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var memberships []store.OrganizationMembership
+	for rows.Next() {
+		var membership store.OrganizationMembership
+		if err := rows.Scan(
+			&membership.OrganizationID,
+			&membership.OrganizationSlug,
+			&membership.OrganizationDisplayName,
+			&membership.UserID,
+			&membership.Username,
+			&membership.Role,
+			&membership.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		memberships = append(memberships, membership)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return memberships, nil
+}
+
+func (s *Store) AddOrganizationMember(ctx context.Context, params store.AddOrganizationMemberParams) (store.OrganizationMembership, error) {
+	role, err := normalizeOrganizationRole(params.Role)
+	if err != nil {
+		return store.OrganizationMembership{}, err
+	}
+
+	organization, err := s.GetOrganizationBySlug(ctx, params.OrganizationSlug)
+	if err != nil {
+		return store.OrganizationMembership{}, err
+	}
+
+	var user store.User
+	user, err = s.GetUserByUsername(ctx, params.Username)
+	if err != nil {
+		return store.OrganizationMembership{}, err
+	}
+
+	var createdAt time.Time
+	if err := s.db.QueryRowContext(
+		ctx,
+		addOrganizationMemberQuery,
+		organization.ID,
+		user.ID,
+		role,
+	).Scan(&createdAt); err != nil {
+		if isUniqueViolation(err) {
+			return store.OrganizationMembership{}, store.ErrAlreadyExists
+		}
+		return store.OrganizationMembership{}, err
+	}
+
+	return store.OrganizationMembership{
+		OrganizationID:          organization.ID,
+		OrganizationSlug:        organization.Slug,
+		OrganizationDisplayName: organization.DisplayName,
+		UserID:                  user.ID,
+		Username:                user.Username,
+		Role:                    role,
+		CreatedAt:               createdAt,
+	}, nil
+}
+
+func (s *Store) GetOrganizationMembership(ctx context.Context, organizationSlug string, userID int64) (store.OrganizationMembership, error) {
+	var membership store.OrganizationMembership
+	err := s.db.QueryRowContext(ctx, getOrganizationMembershipQuery, organizationSlug, userID).Scan(
+		&membership.OrganizationID,
+		&membership.OrganizationSlug,
+		&membership.OrganizationDisplayName,
+		&membership.UserID,
+		&membership.Username,
+		&membership.Role,
+		&membership.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return store.OrganizationMembership{}, store.ErrNotFound
+		}
+		return store.OrganizationMembership{}, err
+	}
+	return membership, nil
+}
+
 func (s *Store) CreateRepository(ctx context.Context, params store.CreateRepositoryParams) (store.Repository, error) {
-	owner, err := s.GetUserByUsername(ctx, params.Owner)
+	ownerType, err := normalizeOwnerType(params.OwnerType)
 	if err != nil {
 		return store.Repository{}, err
+	}
+
+	var ownerUserID sql.NullInt64
+	var ownerOrgID sql.NullInt64
+
+	switch ownerType {
+	case store.OwnerTypeUser:
+		owner, err := s.GetUserByUsername(ctx, params.Owner)
+		if err != nil {
+			return store.Repository{}, err
+		}
+		ownerUserID = sql.NullInt64{Int64: owner.ID, Valid: true}
+	case store.OwnerTypeOrganization:
+		organization, err := s.GetOrganizationBySlug(ctx, params.Owner)
+		if err != nil {
+			return store.Repository{}, err
+		}
+		ownerOrgID = sql.NullInt64{Int64: organization.ID, Valid: true}
 	}
 
 	var repository store.Repository
 	err = s.db.QueryRowContext(
 		ctx,
 		createRepositoryQuery,
-		owner.ID,
+		ownerUserID,
+		ownerOrgID,
 		params.Name,
 		params.Description,
 		params.Visibility,
@@ -255,7 +522,8 @@ func (s *Store) CreateRepository(ctx context.Context, params store.CreateReposit
 		return store.Repository{}, err
 	}
 
-	repository.Owner = owner.Username
+	repository.Owner = params.Owner
+	repository.OwnerType = ownerType
 	return repository, nil
 }
 
@@ -264,6 +532,7 @@ func (s *Store) GetRepositoryByOwnerAndName(ctx context.Context, owner, name str
 	err := s.db.QueryRowContext(ctx, getRepositoryByOwnerAndNameQuery, owner, name).Scan(
 		&repository.ID,
 		&repository.Owner,
+		&repository.OwnerType,
 		&repository.Name,
 		&repository.Description,
 		&repository.Visibility,
@@ -306,8 +575,85 @@ func (s *Store) ListRepositoriesByOwner(ctx context.Context, owner string) ([]st
 	return scanRepositories(rows)
 }
 
+func (s *Store) ListRepositoriesForUser(ctx context.Context, userID int64) ([]store.Repository, error) {
+	rows, err := s.db.QueryContext(ctx, listRepositoriesForUserQuery, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanRepositories(rows)
+}
+
+func (s *Store) AddRepositoryCollaborator(ctx context.Context, params store.AddRepositoryCollaboratorParams) (store.RepositoryCollaborator, error) {
+	role, err := normalizeRepositoryRole(params.Role)
+	if err != nil {
+		return store.RepositoryCollaborator{}, err
+	}
+
+	repository, err := s.GetRepositoryByOwnerAndName(ctx, params.Owner, params.RepoName)
+	if err != nil {
+		return store.RepositoryCollaborator{}, err
+	}
+
+	user, err := s.GetUserByUsername(ctx, params.Username)
+	if err != nil {
+		return store.RepositoryCollaborator{}, err
+	}
+
+	var createdAt time.Time
+	if err := s.db.QueryRowContext(
+		ctx,
+		createRepositoryCollaboratorQuery,
+		repository.ID,
+		user.ID,
+		role,
+	).Scan(&createdAt); err != nil {
+		if isUniqueViolation(err) {
+			return store.RepositoryCollaborator{}, store.ErrAlreadyExists
+		}
+		return store.RepositoryCollaborator{}, err
+	}
+
+	return store.RepositoryCollaborator{
+		RepositoryID: repository.ID,
+		UserID:       user.ID,
+		Username:     user.Username,
+		Role:         role,
+		CreatedAt:    createdAt,
+	}, nil
+}
+
+func (s *Store) GetRepositoryCollaborator(ctx context.Context, owner, repoName string, userID int64) (store.RepositoryCollaborator, error) {
+	repository, err := s.GetRepositoryByOwnerAndName(ctx, owner, repoName)
+	if err != nil {
+		return store.RepositoryCollaborator{}, err
+	}
+
+	var collaborator store.RepositoryCollaborator
+	err = s.db.QueryRowContext(ctx, getRepositoryCollaboratorQuery, repository.ID, userID).Scan(
+		&collaborator.RepositoryID,
+		&collaborator.UserID,
+		&collaborator.Username,
+		&collaborator.Role,
+		&collaborator.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return store.RepositoryCollaborator{}, store.ErrNotFound
+		}
+		return store.RepositoryCollaborator{}, err
+	}
+	return collaborator, nil
+}
+
 func (s *Store) UpdateRepositoryStats(ctx context.Context, owner, name string, sizeBytes int64, indexedAt, maintainedAt *time.Time) error {
-	result, err := s.db.ExecContext(ctx, updateRepositoryStatsQuery, owner, name, sizeBytes, indexedAt, maintainedAt)
+	repository, err := s.GetRepositoryByOwnerAndName(ctx, owner, name)
+	if err != nil {
+		return err
+	}
+
+	result, err := s.db.ExecContext(ctx, updateRepositoryStatsByIDQuery, repository.ID, sizeBytes, indexedAt, maintainedAt)
 	if err != nil {
 		return err
 	}
@@ -322,7 +668,12 @@ func (s *Store) UpdateRepositoryStats(ctx context.Context, owner, name string, s
 }
 
 func (s *Store) DeleteRepository(ctx context.Context, owner, name string) error {
-	result, err := s.db.ExecContext(ctx, deleteRepositoryQuery, owner, name)
+	repository, err := s.GetRepositoryByOwnerAndName(ctx, owner, name)
+	if err != nil {
+		return err
+	}
+
+	result, err := s.db.ExecContext(ctx, deleteRepositoryByIDQuery, repository.ID)
 	if err != nil {
 		return err
 	}
@@ -482,6 +833,59 @@ func (s *Store) Check(ctx context.Context) error {
 	return s.db.PingContext(ctx)
 }
 
+func (s *Store) organizationSlugExists(ctx context.Context, slug string) (bool, error) {
+	var exists bool
+	if err := s.db.QueryRowContext(ctx, organizationSlugExistsQuery, slug).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+func (s *Store) usernameExists(ctx context.Context, username string) (bool, error) {
+	var exists bool
+	if err := s.db.QueryRowContext(ctx, usernameExistsQuery, username).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+func normalizeOwnerType(value string) (string, error) {
+	switch store.NormalizeIdentity(value) {
+	case "", store.OwnerTypeUser:
+		return store.OwnerTypeUser, nil
+	case store.OwnerTypeOrganization:
+		return store.OwnerTypeOrganization, nil
+	default:
+		return "", store.ErrInvalidArgument
+	}
+}
+
+func normalizeOrganizationRole(value string) (string, error) {
+	switch store.NormalizeIdentity(value) {
+	case store.OrganizationRoleMember:
+		return store.OrganizationRoleMember, nil
+	case store.OrganizationRoleMaintainer:
+		return store.OrganizationRoleMaintainer, nil
+	case store.OrganizationRoleOwner:
+		return store.OrganizationRoleOwner, nil
+	default:
+		return "", store.ErrInvalidArgument
+	}
+}
+
+func normalizeRepositoryRole(value string) (string, error) {
+	switch store.NormalizeIdentity(value) {
+	case store.RepositoryRoleRead:
+		return store.RepositoryRoleRead, nil
+	case store.RepositoryRoleWrite:
+		return store.RepositoryRoleWrite, nil
+	case store.RepositoryRoleAdmin:
+		return store.RepositoryRoleAdmin, nil
+	default:
+		return "", store.ErrInvalidArgument
+	}
+}
+
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
@@ -494,6 +898,7 @@ func scanRepositories(rows *sql.Rows) ([]store.Repository, error) {
 		if err := rows.Scan(
 			&repository.ID,
 			&repository.Owner,
+			&repository.OwnerType,
 			&repository.Name,
 			&repository.Description,
 			&repository.Visibility,

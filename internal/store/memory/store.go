@@ -3,7 +3,6 @@ package memory
 import (
 	"context"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -11,14 +10,17 @@ import (
 )
 
 type Store struct {
-	mu        sync.RWMutex
-	nextID    int64
-	users     map[string]store.User
-	usersByID map[int64]store.User
-	repos     map[string]store.Repository
-	userRepos map[string][]string
-	sessions  map[string]store.Session
-	sshKeys   map[string]store.SSHKey
+	mu                  sync.RWMutex
+	nextID              int64
+	users               map[string]store.User
+	usersByID           map[int64]store.User
+	organizations       map[string]store.Organization
+	organizationMembers map[string]map[int64]store.OrganizationMembership
+	repos               map[string]store.Repository
+	ownerRepos          map[string][]string
+	repoCollaborators   map[string]map[int64]store.RepositoryCollaborator
+	sessions            map[string]store.Session
+	sshKeys             map[string]store.SSHKey
 
 	lockMu    sync.Mutex
 	repoLocks map[string]*sync.Mutex
@@ -26,14 +28,17 @@ type Store struct {
 
 func NewStore() *Store {
 	return &Store{
-		nextID:    1,
-		users:     make(map[string]store.User),
-		usersByID: make(map[int64]store.User),
-		repos:     make(map[string]store.Repository),
-		userRepos: make(map[string][]string),
-		sessions:  make(map[string]store.Session),
-		sshKeys:   make(map[string]store.SSHKey),
-		repoLocks: make(map[string]*sync.Mutex),
+		nextID:              1,
+		users:               make(map[string]store.User),
+		usersByID:           make(map[int64]store.User),
+		organizations:       make(map[string]store.Organization),
+		organizationMembers: make(map[string]map[int64]store.OrganizationMembership),
+		repos:               make(map[string]store.Repository),
+		ownerRepos:          make(map[string][]string),
+		repoCollaborators:   make(map[string]map[int64]store.RepositoryCollaborator),
+		sessions:            make(map[string]store.Session),
+		sshKeys:             make(map[string]store.SSHKey),
+		repoLocks:           make(map[string]*sync.Mutex),
 	}
 }
 
@@ -43,6 +48,9 @@ func (s *Store) CreateUser(_ context.Context, username, passwordHash, role strin
 
 	key := normalize(username)
 	if _, exists := s.users[key]; exists {
+		return store.User{}, store.ErrAlreadyExists
+	}
+	if _, exists := s.organizations[key]; exists {
 		return store.User{}, store.ErrAlreadyExists
 	}
 
@@ -84,9 +92,154 @@ func (s *Store) GetUserByUsername(_ context.Context, username string) (store.Use
 	return user, nil
 }
 
+func (s *Store) CreateOrganization(_ context.Context, params store.CreateOrganizationParams) (store.Organization, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := normalize(params.Slug)
+	if _, exists := s.organizations[key]; exists {
+		return store.Organization{}, store.ErrAlreadyExists
+	}
+	if _, exists := s.users[key]; exists {
+		return store.Organization{}, store.ErrAlreadyExists
+	}
+
+	creator, ok := s.usersByID[params.CreatedBy]
+	if !ok {
+		return store.Organization{}, store.ErrNotFound
+	}
+
+	now := time.Now().UTC()
+	org := store.Organization{
+		ID:          s.next(),
+		Slug:        params.Slug,
+		DisplayName: params.DisplayName,
+		Description: params.Description,
+		CreatedBy:   params.CreatedBy,
+		CreatedAt:   now,
+	}
+	s.organizations[key] = org
+
+	if _, ok := s.organizationMembers[key]; !ok {
+		s.organizationMembers[key] = make(map[int64]store.OrganizationMembership)
+	}
+	s.organizationMembers[key][creator.ID] = store.OrganizationMembership{
+		OrganizationID:          org.ID,
+		OrganizationSlug:        org.Slug,
+		OrganizationDisplayName: org.DisplayName,
+		UserID:                  creator.ID,
+		Username:                creator.Username,
+		Role:                    store.OrganizationRoleOwner,
+		CreatedAt:               now,
+	}
+
+	return org, nil
+}
+
+func (s *Store) GetOrganizationBySlug(_ context.Context, slug string) (store.Organization, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	org, ok := s.organizations[normalize(slug)]
+	if !ok {
+		return store.Organization{}, store.ErrNotFound
+	}
+
+	return org, nil
+}
+
+func (s *Store) ListOrganizationsByMember(_ context.Context, userID int64) ([]store.OrganizationMembership, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	memberships := make([]store.OrganizationMembership, 0)
+	for _, members := range s.organizationMembers {
+		if membership, ok := members[userID]; ok {
+			memberships = append(memberships, membership)
+		}
+	}
+
+	sort.Slice(memberships, func(i, j int) bool {
+		return normalize(memberships[i].OrganizationSlug) < normalize(memberships[j].OrganizationSlug)
+	})
+	return memberships, nil
+}
+
+func (s *Store) AddOrganizationMember(_ context.Context, params store.AddOrganizationMemberParams) (store.OrganizationMembership, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	role, err := normalizeOrganizationRole(params.Role)
+	if err != nil {
+		return store.OrganizationMembership{}, err
+	}
+
+	orgKey := normalize(params.OrganizationSlug)
+	org, ok := s.organizations[orgKey]
+	if !ok {
+		return store.OrganizationMembership{}, store.ErrNotFound
+	}
+
+	user, ok := s.users[normalize(params.Username)]
+	if !ok {
+		return store.OrganizationMembership{}, store.ErrNotFound
+	}
+
+	if _, ok := s.organizationMembers[orgKey]; !ok {
+		s.organizationMembers[orgKey] = make(map[int64]store.OrganizationMembership)
+	}
+	if _, exists := s.organizationMembers[orgKey][user.ID]; exists {
+		return store.OrganizationMembership{}, store.ErrAlreadyExists
+	}
+
+	membership := store.OrganizationMembership{
+		OrganizationID:          org.ID,
+		OrganizationSlug:        org.Slug,
+		OrganizationDisplayName: org.DisplayName,
+		UserID:                  user.ID,
+		Username:                user.Username,
+		Role:                    role,
+		CreatedAt:               time.Now().UTC(),
+	}
+	s.organizationMembers[orgKey][user.ID] = membership
+
+	return membership, nil
+}
+
+func (s *Store) GetOrganizationMembership(_ context.Context, organizationSlug string, userID int64) (store.OrganizationMembership, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	members, ok := s.organizationMembers[normalize(organizationSlug)]
+	if !ok {
+		return store.OrganizationMembership{}, store.ErrNotFound
+	}
+	membership, ok := members[userID]
+	if !ok {
+		return store.OrganizationMembership{}, store.ErrNotFound
+	}
+	return membership, nil
+}
+
 func (s *Store) CreateRepository(_ context.Context, params store.CreateRepositoryParams) (store.Repository, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	ownerType, err := normalizeOwnerType(params.OwnerType)
+	if err != nil {
+		return store.Repository{}, err
+	}
+
+	switch ownerType {
+	case store.OwnerTypeUser:
+		if _, ok := s.users[normalize(params.Owner)]; !ok {
+			return store.Repository{}, store.ErrNotFound
+		}
+	case store.OwnerTypeOrganization:
+		if _, ok := s.organizations[normalize(params.Owner)]; !ok {
+			return store.Repository{}, store.ErrNotFound
+		}
+	}
 
 	key := repoKey(params.Owner, params.Name)
 	if _, exists := s.repos[key]; exists {
@@ -97,6 +250,7 @@ func (s *Store) CreateRepository(_ context.Context, params store.CreateRepositor
 	repo := store.Repository{
 		ID:               s.next(),
 		Owner:            params.Owner,
+		OwnerType:        ownerType,
 		Name:             params.Name,
 		Description:      params.Description,
 		Visibility:       params.Visibility,
@@ -109,7 +263,8 @@ func (s *Store) CreateRepository(_ context.Context, params store.CreateRepositor
 	}
 
 	s.repos[key] = repo
-	s.userRepos[normalize(params.Owner)] = append(s.userRepos[normalize(params.Owner)], key)
+	ownerKey := normalize(params.Owner)
+	s.ownerRepos[ownerKey] = append(s.ownerRepos[ownerKey], key)
 
 	return repo, nil
 }
@@ -134,14 +289,7 @@ func (s *Store) ListRepositories(_ context.Context) ([]store.Repository, error) 
 	for _, repository := range s.repos {
 		repositories = append(repositories, repository)
 	}
-
-	sort.Slice(repositories, func(i, j int) bool {
-		if repositories[i].Owner == repositories[j].Owner {
-			return repositories[i].Name < repositories[j].Name
-		}
-		return repositories[i].Owner < repositories[j].Owner
-	})
-
+	sortRepositories(repositories)
 	return repositories, nil
 }
 
@@ -149,20 +297,102 @@ func (s *Store) ListRepositoriesByOwner(_ context.Context, owner string) ([]stor
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	keys := append([]string(nil), s.userRepos[normalize(owner)]...)
+	keys := append([]string(nil), s.ownerRepos[normalize(owner)]...)
 	repositories := make([]store.Repository, 0, len(keys))
 	for _, key := range keys {
-		repository, ok := s.repos[key]
-		if ok {
+		if repository, ok := s.repos[key]; ok {
 			repositories = append(repositories, repository)
 		}
 	}
-
-	sort.Slice(repositories, func(i, j int) bool {
-		return repositories[i].Name < repositories[j].Name
-	})
-
+	sortRepositories(repositories)
 	return repositories, nil
+}
+
+func (s *Store) ListRepositoriesForUser(_ context.Context, userID int64) ([]store.Repository, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	user, ok := s.usersByID[userID]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+
+	repositories := make([]store.Repository, 0)
+	for key, repository := range s.repos {
+		if repository.OwnerType == store.OwnerTypeUser && normalize(repository.Owner) == normalize(user.Username) {
+			repositories = append(repositories, repository)
+			continue
+		}
+		if repository.OwnerType == store.OwnerTypeOrganization {
+			if members, ok := s.organizationMembers[normalize(repository.Owner)]; ok {
+				if _, ok := members[userID]; ok {
+					repositories = append(repositories, repository)
+					continue
+				}
+			}
+		}
+		if collaborators, ok := s.repoCollaborators[key]; ok {
+			if _, ok := collaborators[userID]; ok {
+				repositories = append(repositories, repository)
+			}
+		}
+	}
+
+	sortRepositories(repositories)
+	return repositories, nil
+}
+
+func (s *Store) AddRepositoryCollaborator(_ context.Context, params store.AddRepositoryCollaboratorParams) (store.RepositoryCollaborator, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	role, err := normalizeRepositoryRole(params.Role)
+	if err != nil {
+		return store.RepositoryCollaborator{}, err
+	}
+
+	user, ok := s.users[normalize(params.Username)]
+	if !ok {
+		return store.RepositoryCollaborator{}, store.ErrNotFound
+	}
+
+	repository, ok := s.repos[repoKey(params.Owner, params.RepoName)]
+	if !ok {
+		return store.RepositoryCollaborator{}, store.ErrNotFound
+	}
+
+	key := repoKey(repository.Owner, repository.Name)
+	if _, ok := s.repoCollaborators[key]; !ok {
+		s.repoCollaborators[key] = make(map[int64]store.RepositoryCollaborator)
+	}
+	if _, exists := s.repoCollaborators[key][user.ID]; exists {
+		return store.RepositoryCollaborator{}, store.ErrAlreadyExists
+	}
+
+	collaborator := store.RepositoryCollaborator{
+		RepositoryID: repository.ID,
+		UserID:       user.ID,
+		Username:     user.Username,
+		Role:         role,
+		CreatedAt:    time.Now().UTC(),
+	}
+	s.repoCollaborators[key][user.ID] = collaborator
+	return collaborator, nil
+}
+
+func (s *Store) GetRepositoryCollaborator(_ context.Context, owner, repoName string, userID int64) (store.RepositoryCollaborator, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	collaborators, ok := s.repoCollaborators[repoKey(owner, repoName)]
+	if !ok {
+		return store.RepositoryCollaborator{}, store.ErrNotFound
+	}
+	collaborator, ok := collaborators[userID]
+	if !ok {
+		return store.RepositoryCollaborator{}, store.ErrNotFound
+	}
+	return collaborator, nil
 }
 
 func (s *Store) UpdateRepositoryStats(_ context.Context, owner, name string, sizeBytes int64, indexedAt, maintainedAt *time.Time) error {
@@ -199,16 +429,17 @@ func (s *Store) DeleteRepository(_ context.Context, owner, name string) error {
 	}
 
 	delete(s.repos, key)
+	delete(s.repoCollaborators, key)
 
 	ownerKey := normalize(owner)
-	keys := s.userRepos[ownerKey]
+	keys := s.ownerRepos[ownerKey]
 	filtered := keys[:0]
 	for _, existing := range keys {
 		if existing != key {
 			filtered = append(filtered, existing)
 		}
 	}
-	s.userRepos[ownerKey] = filtered
+	s.ownerRepos[ownerKey] = filtered
 
 	return nil
 }
@@ -329,7 +560,56 @@ func repoKey(owner, name string) string {
 }
 
 func normalize(value string) string {
-	return strings.ToLower(strings.TrimSpace(value))
+	return store.NormalizeIdentity(value)
+}
+
+func sortRepositories(repositories []store.Repository) {
+	sort.Slice(repositories, func(i, j int) bool {
+		if repositories[i].Owner == repositories[j].Owner {
+			if repositories[i].OwnerType == repositories[j].OwnerType {
+				return repositories[i].Name < repositories[j].Name
+			}
+			return repositories[i].OwnerType < repositories[j].OwnerType
+		}
+		return repositories[i].Owner < repositories[j].Owner
+	})
+}
+
+func normalizeOwnerType(value string) (string, error) {
+	switch normalize(value) {
+	case "", store.OwnerTypeUser:
+		return store.OwnerTypeUser, nil
+	case store.OwnerTypeOrganization:
+		return store.OwnerTypeOrganization, nil
+	default:
+		return "", store.ErrInvalidArgument
+	}
+}
+
+func normalizeOrganizationRole(value string) (string, error) {
+	switch normalize(value) {
+	case store.OrganizationRoleMember:
+		return store.OrganizationRoleMember, nil
+	case store.OrganizationRoleMaintainer:
+		return store.OrganizationRoleMaintainer, nil
+	case store.OrganizationRoleOwner:
+		return store.OrganizationRoleOwner, nil
+	default:
+		return "", store.ErrInvalidArgument
+	}
+}
+
+func normalizeRepositoryRole(value string) (string, error) {
+	switch normalize(value) {
+	case store.RepositoryRoleRead:
+		return store.RepositoryRoleRead, nil
+	case store.RepositoryRoleWrite:
+		return store.RepositoryRoleWrite, nil
+	case store.RepositoryRoleAdmin:
+		return store.RepositoryRoleAdmin, nil
+	default:
+		return "", store.ErrInvalidArgument
+	}
 }
 
 func (s *Store) repoMutex(owner, name string) *sync.Mutex {

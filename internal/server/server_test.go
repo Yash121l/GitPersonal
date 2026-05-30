@@ -172,6 +172,122 @@ func TestReadyzAndSecurityHeaders(t *testing.T) {
 	}
 }
 
+func TestOrganizationAndCollaboratorLifecycle(t *testing.T) {
+	t.Parallel()
+
+	app, _ := newTestServer(t)
+
+	aliceRegister := performJSONRequest(t, app.Router(), http.MethodPost, "/api/v1/auth/register", map[string]string{
+		"username": "alice",
+		"password": "correct horse battery staple",
+	}, nil)
+	if aliceRegister.Code != http.StatusCreated {
+		t.Fatalf("alice register status = %d, body = %s", aliceRegister.Code, aliceRegister.Body.String())
+	}
+	aliceCookie := firstCookie(t, aliceRegister.Result().Cookies(), "forge_session")
+
+	bobRegister := performJSONRequest(t, app.Router(), http.MethodPost, "/api/v1/auth/register", map[string]string{
+		"username": "bob",
+		"password": "correct horse battery staple",
+	}, nil)
+	if bobRegister.Code != http.StatusCreated {
+		t.Fatalf("bob register status = %d, body = %s", bobRegister.Code, bobRegister.Body.String())
+	}
+	bobCookie := firstCookie(t, bobRegister.Result().Cookies(), "forge_session")
+
+	createOrg := performJSONRequest(t, app.Router(), http.MethodPost, "/api/v1/orgs", map[string]string{
+		"slug":         "team",
+		"display_name": "Team",
+		"description":  "shared ownership",
+	}, aliceCookie)
+	if createOrg.Code != http.StatusCreated {
+		t.Fatalf("create org status = %d, body = %s", createOrg.Code, createOrg.Body.String())
+	}
+
+	addMember := performJSONRequest(t, app.Router(), http.MethodPost, "/api/v1/orgs/team/members", map[string]string{
+		"username": "bob",
+		"role":     "maintainer",
+	}, aliceCookie)
+	if addMember.Code != http.StatusCreated {
+		t.Fatalf("add member status = %d, body = %s", addMember.Code, addMember.Body.String())
+	}
+
+	createOrgRepo := performJSONRequest(t, app.Router(), http.MethodPost, "/api/v1/repos", map[string]string{
+		"owner":          "team",
+		"owner_type":     "organization",
+		"name":           "infra",
+		"description":    "team repo",
+		"visibility":     "private",
+		"default_branch": "main",
+	}, bobCookie)
+	if createOrgRepo.Code != http.StatusCreated {
+		t.Fatalf("create org repo status = %d, body = %s", createOrgRepo.Code, createOrgRepo.Body.String())
+	}
+
+	createPersonalRepo := performJSONRequest(t, app.Router(), http.MethodPost, "/api/v1/repos", map[string]string{
+		"name":           "personal",
+		"description":    "alice repo",
+		"visibility":     "private",
+		"default_branch": "main",
+	}, aliceCookie)
+	if createPersonalRepo.Code != http.StatusCreated {
+		t.Fatalf("create personal repo status = %d, body = %s", createPersonalRepo.Code, createPersonalRepo.Body.String())
+	}
+
+	addCollaborator := performJSONRequest(t, app.Router(), http.MethodPost, "/api/v1/repos/alice/personal/collaborators", map[string]string{
+		"username": "bob",
+		"role":     "write",
+	}, aliceCookie)
+	if addCollaborator.Code != http.StatusCreated {
+		t.Fatalf("add collaborator status = %d, body = %s", addCollaborator.Code, addCollaborator.Body.String())
+	}
+
+	listRepos := performJSONRequest(t, app.Router(), http.MethodGet, "/api/v1/repos", nil, bobCookie)
+	if listRepos.Code != http.StatusOK {
+		t.Fatalf("list repos status = %d, body = %s", listRepos.Code, listRepos.Body.String())
+	}
+
+	var listBody struct {
+		Repositories []struct {
+			Owner     string `json:"owner"`
+			OwnerType string `json:"owner_type"`
+			Name      string `json:"name"`
+		} `json:"repositories"`
+	}
+	if err := json.Unmarshal(listRepos.Body.Bytes(), &listBody); err != nil {
+		t.Fatalf("decode repo list: %v", err)
+	}
+	if len(listBody.Repositories) != 2 {
+		t.Fatalf("expected 2 accessible repositories for bob, got %+v", listBody.Repositories)
+	}
+
+	seen := map[string]bool{}
+	for _, repository := range listBody.Repositories {
+		seen[repository.OwnerType+":"+repository.Owner+"/"+repository.Name] = true
+	}
+	if !seen["organization:team/infra"] {
+		t.Fatalf("expected bob to see org repository, got %+v", listBody.Repositories)
+	}
+	if !seen["user:alice/personal"] {
+		t.Fatalf("expected bob to see collaborator repository, got %+v", listBody.Repositories)
+	}
+
+	listOrgs := performJSONRequest(t, app.Router(), http.MethodGet, "/api/v1/orgs", nil, bobCookie)
+	if listOrgs.Code != http.StatusOK {
+		t.Fatalf("list orgs status = %d, body = %s", listOrgs.Code, listOrgs.Body.String())
+	}
+
+	deletePersonalAsBob := performJSONRequest(t, app.Router(), http.MethodDelete, "/api/v1/repos/alice/personal", nil, bobCookie)
+	if deletePersonalAsBob.Code != http.StatusForbidden {
+		t.Fatalf("expected collaborator write delete to be forbidden, got %d with body %s", deletePersonalAsBob.Code, deletePersonalAsBob.Body.String())
+	}
+
+	deleteOrgAsBob := performJSONRequest(t, app.Router(), http.MethodDelete, "/api/v1/repos/team/infra", nil, bobCookie)
+	if deleteOrgAsBob.Code != http.StatusForbidden {
+		t.Fatalf("expected org maintainer delete to be forbidden, got %d with body %s", deleteOrgAsBob.Code, deleteOrgAsBob.Body.String())
+	}
+}
+
 func performJSONRequest(t *testing.T, handler http.Handler, method, path string, body any, cookie *http.Cookie) *httptest.ResponseRecorder {
 	t.Helper()
 

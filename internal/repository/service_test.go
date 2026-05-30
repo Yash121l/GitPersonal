@@ -145,6 +145,129 @@ func TestRepoPathUsesFanoutLayout(t *testing.T) {
 	}
 }
 
+func TestPermissionsCoverOrganizationsAndCollaborators(t *testing.T) {
+	t.Parallel()
+
+	reposRoot := t.TempDir()
+	st := memory.NewStore()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	service, err := NewService(logger, st, reposRoot)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	alice, err := st.CreateUser(context.Background(), "alice", "hash", "member")
+	if err != nil {
+		t.Fatalf("create alice: %v", err)
+	}
+	bob, err := st.CreateUser(context.Background(), "bob", "hash", "member")
+	if err != nil {
+		t.Fatalf("create bob: %v", err)
+	}
+	carol, err := st.CreateUser(context.Background(), "carol", "hash", "member")
+	if err != nil {
+		t.Fatalf("create carol: %v", err)
+	}
+
+	if _, err := st.CreateOrganization(context.Background(), store.CreateOrganizationParams{
+		Slug:        "team",
+		DisplayName: "Team",
+		Description: "shared ownership",
+		CreatedBy:   alice.ID,
+	}); err != nil {
+		t.Fatalf("create organization: %v", err)
+	}
+	if _, err := st.AddOrganizationMember(context.Background(), store.AddOrganizationMemberParams{
+		OrganizationSlug: "team",
+		Username:         "bob",
+		Role:             store.OrganizationRoleMaintainer,
+	}); err != nil {
+		t.Fatalf("add bob to org: %v", err)
+	}
+
+	orgRepo, err := service.CreateRepository(context.Background(), store.CreateRepositoryParams{
+		Owner:         "team",
+		OwnerType:     store.OwnerTypeOrganization,
+		Name:          "infra",
+		Description:   "org repo",
+		Visibility:    "private",
+		DefaultBranch: "main",
+	})
+	if err != nil {
+		t.Fatalf("create org repository: %v", err)
+	}
+
+	if _, err := st.AddRepositoryCollaborator(context.Background(), store.AddRepositoryCollaboratorParams{
+		Owner:    "team",
+		RepoName: "infra",
+		Username: "carol",
+		Role:     store.RepositoryRoleRead,
+	}); err != nil {
+		t.Fatalf("add carol collaborator: %v", err)
+	}
+
+	alicePermissions, err := service.Permissions(context.Background(), &alice, orgRepo)
+	if err != nil {
+		t.Fatalf("alice permissions: %v", err)
+	}
+	if !alicePermissions.CanAdmin || !alicePermissions.CanWrite || !alicePermissions.CanRead {
+		t.Fatalf("expected alice to admin org repo, got %+v", alicePermissions)
+	}
+
+	bobPermissions, err := service.Permissions(context.Background(), &bob, orgRepo)
+	if err != nil {
+		t.Fatalf("bob permissions: %v", err)
+	}
+	if !bobPermissions.CanRead || !bobPermissions.CanWrite || bobPermissions.CanAdmin {
+		t.Fatalf("expected bob maintainer permissions, got %+v", bobPermissions)
+	}
+
+	carolPermissions, err := service.Permissions(context.Background(), &carol, orgRepo)
+	if err != nil {
+		t.Fatalf("carol permissions: %v", err)
+	}
+	if !carolPermissions.CanRead || carolPermissions.CanWrite || carolPermissions.CanAdmin {
+		t.Fatalf("expected carol read-only collaborator permissions, got %+v", carolPermissions)
+	}
+
+	anonymousPermissions, err := service.Permissions(context.Background(), nil, orgRepo)
+	if err != nil {
+		t.Fatalf("anonymous permissions: %v", err)
+	}
+	if anonymousPermissions.CanRead || anonymousPermissions.CanWrite || anonymousPermissions.CanAdmin {
+		t.Fatalf("expected private repo to block anonymous access, got %+v", anonymousPermissions)
+	}
+
+	userRepo, err := service.CreateRepository(context.Background(), store.CreateRepositoryParams{
+		Owner:         "alice",
+		OwnerType:     store.OwnerTypeUser,
+		Name:          "personal",
+		Description:   "user repo",
+		Visibility:    "private",
+		DefaultBranch: "main",
+	})
+	if err != nil {
+		t.Fatalf("create user repository: %v", err)
+	}
+
+	if _, err := st.AddRepositoryCollaborator(context.Background(), store.AddRepositoryCollaboratorParams{
+		Owner:    "alice",
+		RepoName: "personal",
+		Username: "bob",
+		Role:     store.RepositoryRoleAdmin,
+	}); err != nil {
+		t.Fatalf("add bob admin collaborator: %v", err)
+	}
+
+	userRepoPermissions, err := service.Permissions(context.Background(), &bob, userRepo)
+	if err != nil {
+		t.Fatalf("bob user repo permissions: %v", err)
+	}
+	if !userRepoPermissions.CanAdmin || !userRepoPermissions.CanWrite || !userRepoPermissions.CanRead {
+		t.Fatalf("expected bob admin collaborator permissions, got %+v", userRepoPermissions)
+	}
+}
+
 func runGit(t *testing.T, workdir string, args ...string) {
 	t.Helper()
 

@@ -229,6 +229,136 @@ func TestWithRepositoryLeaseSerializesSameRepository(t *testing.T) {
 	assertNoError(t, <-errs)
 }
 
+func TestOrganizationAndCollaboratorRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	testDB := newTestDatabase(t)
+	st := newTestStore(t, testDB)
+
+	alice, err := st.CreateUser(context.Background(), "alice", "hash", "member")
+	if err != nil {
+		t.Fatalf("create alice: %v", err)
+	}
+	bob, err := st.CreateUser(context.Background(), "bob", "hash", "member")
+	if err != nil {
+		t.Fatalf("create bob: %v", err)
+	}
+	carol, err := st.CreateUser(context.Background(), "carol", "hash", "member")
+	if err != nil {
+		t.Fatalf("create carol: %v", err)
+	}
+
+	organization, err := st.CreateOrganization(context.Background(), store.CreateOrganizationParams{
+		Slug:        "team",
+		DisplayName: "Team",
+		Description: "shared ownership",
+		CreatedBy:   alice.ID,
+	})
+	if err != nil {
+		t.Fatalf("create organization: %v", err)
+	}
+	if _, err := st.CreateOrganization(context.Background(), store.CreateOrganizationParams{
+		Slug:        "alice",
+		DisplayName: "Collision",
+		Description: "invalid",
+		CreatedBy:   alice.ID,
+	}); !errors.Is(err, store.ErrAlreadyExists) {
+		t.Fatalf("expected org slug collision with username to fail, got %v", err)
+	}
+	if _, err := st.CreateUser(context.Background(), "TEAM", "hash", "member"); !errors.Is(err, store.ErrAlreadyExists) {
+		t.Fatalf("expected username collision with org slug to fail, got %v", err)
+	}
+
+	gotOrganization, err := st.GetOrganizationBySlug(context.Background(), "TEAM")
+	if err != nil {
+		t.Fatalf("get organization: %v", err)
+	}
+	if gotOrganization.ID != organization.ID {
+		t.Fatalf("unexpected organization id: got %d want %d", gotOrganization.ID, organization.ID)
+	}
+
+	ownerMembership, err := st.GetOrganizationMembership(context.Background(), "team", alice.ID)
+	if err != nil {
+		t.Fatalf("get owner membership: %v", err)
+	}
+	if ownerMembership.Role != store.OrganizationRoleOwner {
+		t.Fatalf("expected org creator to be owner, got %s", ownerMembership.Role)
+	}
+
+	addedMembership, err := st.AddOrganizationMember(context.Background(), store.AddOrganizationMemberParams{
+		OrganizationSlug: "team",
+		Username:         "bob",
+		Role:             store.OrganizationRoleMaintainer,
+	})
+	if err != nil {
+		t.Fatalf("add bob membership: %v", err)
+	}
+	if addedMembership.Role != store.OrganizationRoleMaintainer {
+		t.Fatalf("unexpected membership role: %s", addedMembership.Role)
+	}
+
+	memberships, err := st.ListOrganizationsByMember(context.Background(), bob.ID)
+	if err != nil {
+		t.Fatalf("list bob memberships: %v", err)
+	}
+	if len(memberships) != 1 || memberships[0].OrganizationSlug != "team" {
+		t.Fatalf("unexpected org memberships: %+v", memberships)
+	}
+
+	repository, err := st.CreateRepository(context.Background(), store.CreateRepositoryParams{
+		Owner:         "team",
+		OwnerType:     store.OwnerTypeOrganization,
+		Name:          "infra",
+		Description:   "org repo",
+		Visibility:    "private",
+		DefaultBranch: "main",
+		RepoPath:      "/data/repos/team/infra.git",
+	})
+	if err != nil {
+		t.Fatalf("create org repository: %v", err)
+	}
+	if repository.OwnerType != store.OwnerTypeOrganization {
+		t.Fatalf("expected org repo owner type, got %s", repository.OwnerType)
+	}
+
+	collaborator, err := st.AddRepositoryCollaborator(context.Background(), store.AddRepositoryCollaboratorParams{
+		Owner:    "team",
+		RepoName: "infra",
+		Username: "carol",
+		Role:     store.RepositoryRoleWrite,
+	})
+	if err != nil {
+		t.Fatalf("add collaborator: %v", err)
+	}
+	if collaborator.Role != store.RepositoryRoleWrite {
+		t.Fatalf("unexpected collaborator role: %s", collaborator.Role)
+	}
+
+	gotCollaborator, err := st.GetRepositoryCollaborator(context.Background(), "team", "infra", carol.ID)
+	if err != nil {
+		t.Fatalf("get collaborator: %v", err)
+	}
+	if gotCollaborator.Username != "carol" {
+		t.Fatalf("unexpected collaborator username: %s", gotCollaborator.Username)
+	}
+
+	bobRepos, err := st.ListRepositoriesForUser(context.Background(), bob.ID)
+	if err != nil {
+		t.Fatalf("list bob repos: %v", err)
+	}
+	if len(bobRepos) != 1 || bobRepos[0].Owner != "team" || bobRepos[0].OwnerType != store.OwnerTypeOrganization {
+		t.Fatalf("unexpected bob accessible repos: %+v", bobRepos)
+	}
+
+	carolRepos, err := st.ListRepositoriesForUser(context.Background(), carol.ID)
+	if err != nil {
+		t.Fatalf("list carol repos: %v", err)
+	}
+	if len(carolRepos) != 1 || carolRepos[0].Name != "infra" {
+		t.Fatalf("unexpected carol accessible repos: %+v", carolRepos)
+	}
+}
+
 func TestWithRepositoryLeaseDoesNotBlockDifferentRepositories(t *testing.T) {
 	t.Parallel()
 
