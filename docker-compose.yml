@@ -11,12 +11,11 @@ services:
       - forge_data:/data
     ports:
       - "3000:3000"
+      - "2222:2222"
     security_opt:
       - no-new-privileges:true
-    cap_drop:
-      - ALL
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/readyz"]
       interval: 10s
       timeout: 5s
       retries: 10

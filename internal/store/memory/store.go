@@ -14,8 +14,11 @@ type Store struct {
 	mu        sync.RWMutex
 	nextID    int64
 	users     map[string]store.User
+	usersByID map[int64]store.User
 	repos     map[string]store.Repository
 	userRepos map[string][]string
+	sessions  map[string]store.Session
+	sshKeys   map[string]store.SSHKey
 
 	lockMu    sync.Mutex
 	repoLocks map[string]*sync.Mutex
@@ -25,8 +28,11 @@ func NewStore() *Store {
 	return &Store{
 		nextID:    1,
 		users:     make(map[string]store.User),
+		usersByID: make(map[int64]store.User),
 		repos:     make(map[string]store.Repository),
 		userRepos: make(map[string][]string),
+		sessions:  make(map[string]store.Session),
+		sshKeys:   make(map[string]store.SSHKey),
 		repoLocks: make(map[string]*sync.Mutex),
 	}
 }
@@ -49,6 +55,19 @@ func (s *Store) CreateUser(_ context.Context, username, passwordHash, role strin
 		CreatedAt:    now,
 	}
 	s.users[key] = user
+	s.usersByID[user.ID] = user
+
+	return user, nil
+}
+
+func (s *Store) GetUserByID(_ context.Context, id int64) (store.User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	user, ok := s.usersByID[id]
+	if !ok {
+		return store.User{}, store.ErrNotFound
+	}
 
 	return user, nil
 }
@@ -76,15 +95,17 @@ func (s *Store) CreateRepository(_ context.Context, params store.CreateRepositor
 
 	now := time.Now().UTC()
 	repo := store.Repository{
-		ID:            s.next(),
-		Owner:         params.Owner,
-		Name:          params.Name,
-		Description:   params.Description,
-		Visibility:    params.Visibility,
-		DefaultBranch: params.DefaultBranch,
-		RepoPath:      params.RepoPath,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:               s.next(),
+		Owner:            params.Owner,
+		Name:             params.Name,
+		Description:      params.Description,
+		Visibility:       params.Visibility,
+		DefaultBranch:    params.DefaultBranch,
+		RepoPath:         params.RepoPath,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		LastIndexedAt:    &now,
+		LastMaintainedAt: &now,
 	}
 
 	s.repos[key] = repo
@@ -105,6 +126,25 @@ func (s *Store) GetRepositoryByOwnerAndName(_ context.Context, owner, name strin
 	return repository, nil
 }
 
+func (s *Store) ListRepositories(_ context.Context) ([]store.Repository, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	repositories := make([]store.Repository, 0, len(s.repos))
+	for _, repository := range s.repos {
+		repositories = append(repositories, repository)
+	}
+
+	sort.Slice(repositories, func(i, j int) bool {
+		if repositories[i].Owner == repositories[j].Owner {
+			return repositories[i].Name < repositories[j].Name
+		}
+		return repositories[i].Owner < repositories[j].Owner
+	})
+
+	return repositories, nil
+}
+
 func (s *Store) ListRepositoriesByOwner(_ context.Context, owner string) ([]store.Repository, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -123,6 +163,30 @@ func (s *Store) ListRepositoriesByOwner(_ context.Context, owner string) ([]stor
 	})
 
 	return repositories, nil
+}
+
+func (s *Store) UpdateRepositoryStats(_ context.Context, owner, name string, sizeBytes int64, indexedAt, maintainedAt *time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := repoKey(owner, name)
+	repository, ok := s.repos[key]
+	if !ok {
+		return store.ErrNotFound
+	}
+
+	repository.SizeBytes = sizeBytes
+	if indexedAt != nil {
+		value := *indexedAt
+		repository.LastIndexedAt = &value
+	}
+	if maintainedAt != nil {
+		value := *maintainedAt
+		repository.LastMaintainedAt = &value
+	}
+	repository.UpdatedAt = time.Now().UTC()
+	s.repos[key] = repository
+	return nil
 }
 
 func (s *Store) DeleteRepository(_ context.Context, owner, name string) error {
@@ -146,6 +210,99 @@ func (s *Store) DeleteRepository(_ context.Context, owner, name string) error {
 	}
 	s.userRepos[ownerKey] = filtered
 
+	return nil
+}
+
+func (s *Store) CreateSession(_ context.Context, params store.CreateSessionParams) (store.Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.sessions[params.TokenID]; exists {
+		return store.Session{}, store.ErrAlreadyExists
+	}
+
+	session := store.Session{
+		ID:        s.next(),
+		UserID:    params.UserID,
+		TokenID:   params.TokenID,
+		ExpiresAt: params.ExpiresAt,
+		CreatedAt: time.Now().UTC(),
+	}
+	s.sessions[params.TokenID] = session
+	return session, nil
+}
+
+func (s *Store) GetSessionByTokenID(_ context.Context, tokenID string) (store.Session, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	session, ok := s.sessions[tokenID]
+	if !ok {
+		return store.Session{}, store.ErrNotFound
+	}
+	return session, nil
+}
+
+func (s *Store) RevokeSession(_ context.Context, tokenID string, revokedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	session, ok := s.sessions[tokenID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	value := revokedAt
+	session.RevokedAt = &value
+	s.sessions[tokenID] = session
+	return nil
+}
+
+func (s *Store) CreateSSHKey(_ context.Context, params store.CreateSSHKeyParams) (store.SSHKey, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.sshKeys[params.FingerprintSHA256]; exists {
+		return store.SSHKey{}, store.ErrAlreadyExists
+	}
+
+	key := store.SSHKey{
+		ID:                s.next(),
+		UserID:            params.UserID,
+		Name:              params.Name,
+		PublicKey:         params.PublicKey,
+		FingerprintSHA256: params.FingerprintSHA256,
+		CreatedAt:         time.Now().UTC(),
+	}
+	s.sshKeys[params.FingerprintSHA256] = key
+	return key, nil
+}
+
+func (s *Store) GetUserBySSHFingerprint(_ context.Context, fingerprint string) (store.User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	key, ok := s.sshKeys[fingerprint]
+	if !ok {
+		return store.User{}, store.ErrNotFound
+	}
+	user, ok := s.usersByID[key.UserID]
+	if !ok {
+		return store.User{}, store.ErrNotFound
+	}
+	return user, nil
+}
+
+func (s *Store) TouchSSHKeyUsage(_ context.Context, fingerprint string, usedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key, ok := s.sshKeys[fingerprint]
+	if !ok {
+		return store.ErrNotFound
+	}
+	value := usedAt
+	key.LastUsedAt = &value
+	s.sshKeys[fingerprint] = key
 	return nil
 }
 

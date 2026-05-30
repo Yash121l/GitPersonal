@@ -41,18 +41,27 @@ type Config struct {
 	DBMaxIdleConns      int
 	DBConnMaxLifetime   time.Duration
 	DBConnMaxIdleTime   time.Duration
+
+	SSHEnabled     bool
+	SSHAddress     string
+	SSHHostKeyPath string
+	SSHUser        string
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		Environment: getEnv("FORGE_ENV", defaultEnvironment),
-		Address:     getEnv("FORGE_ADDR", defaultAddress),
-		BaseURL:     getEnv("FORGE_BASE_URL", defaultBaseURL),
-		Secret:      getEnv("FORGE_SECRET", "dev-secret-change-me"),
-		CookieName:  getEnv("FORGE_COOKIE_NAME", defaultCookieName),
-		ReposRoot:   getEnv("FORGE_REPOS_ROOT", defaultReposRoot),
-		DatabaseURL: os.Getenv("DATABASE_URL"),
-		RedisURL:    os.Getenv("REDIS_URL"),
+		Environment:    getEnv("FORGE_ENV", defaultEnvironment),
+		Address:        getEnv("FORGE_ADDR", defaultAddress),
+		BaseURL:        getEnv("FORGE_BASE_URL", defaultBaseURL),
+		Secret:         getEnv("FORGE_SECRET", "dev-secret-change-me"),
+		CookieName:     getEnv("FORGE_COOKIE_NAME", defaultCookieName),
+		ReposRoot:      getEnv("FORGE_REPOS_ROOT", defaultReposRoot),
+		DatabaseURL:    os.Getenv("DATABASE_URL"),
+		RedisURL:       os.Getenv("REDIS_URL"),
+		SSHEnabled:     strings.EqualFold(getEnv("FORGE_SSH_ENABLED", "true"), "true"),
+		SSHAddress:     getEnv("FORGE_SSH_ADDR", ":2222"),
+		SSHHostKeyPath: getEnv("FORGE_SSH_HOST_KEY_PATH", filepath.Join(defaultReposRoot, "..", "ssh", "host_ed25519")),
+		SSHUser:        getEnv("FORGE_SSH_USER", "git"),
 	}
 
 	sessionTTL := getEnv("FORGE_SESSION_TTL", defaultSessionTTL.String())
@@ -128,6 +137,9 @@ func (c Config) Validate() error {
 	}
 	if !filepath.IsAbs(c.ReposRoot) {
 		return errors.New("FORGE_REPOS_ROOT must be an absolute path")
+	}
+	if c.SSHHostKeyPath != "" && !filepath.IsAbs(c.SSHHostKeyPath) {
+		return errors.New("FORGE_SSH_HOST_KEY_PATH must be an absolute path")
 	}
 	if _, err := url.ParseRequestURI(c.BaseURL); err != nil {
 		return fmt.Errorf("parse FORGE_BASE_URL: %w", err)

@@ -26,7 +26,7 @@ Not implemented yet:
 ## Quick Start
 
 1. Copy `.env.example` to `.env` and adjust the values you care about.
-2. Run `docker compose up --build`.
+2. Run `docker-compose up --build`.
 3. Visit `http://localhost:3000/healthz`.
 
 For local-only development without Docker:

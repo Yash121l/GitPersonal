@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -11,7 +12,9 @@ import (
 
 	"github.com/yashlunawat/forge/internal/config"
 	"github.com/yashlunawat/forge/internal/database"
+	"github.com/yashlunawat/forge/internal/repository"
 	"github.com/yashlunawat/forge/internal/server"
+	"github.com/yashlunawat/forge/internal/sshgit"
 	"github.com/yashlunawat/forge/internal/store"
 	"github.com/yashlunawat/forge/internal/store/memory"
 	"github.com/yashlunawat/forge/internal/store/postgres"
@@ -25,6 +28,9 @@ func main() {
 	}
 
 	logger := newLogger(cfg.Environment)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	st, closeStore, err := loadStore(context.Background(), logger, cfg)
 	if err != nil {
 		logger.Error("load store", "error", err)
@@ -32,7 +38,14 @@ func main() {
 	}
 	defer closeStore()
 
-	app, err := server.New(cfg, logger, st)
+	repositories, err := repository.NewService(logger, st, cfg.ReposRoot)
+	if err != nil {
+		logger.Error("initialize repositories", "error", err)
+		os.Exit(1)
+	}
+	repositories.Start(ctx)
+
+	app, err := server.New(cfg, logger, st, repositories)
 	if err != nil {
 		logger.Error("initialize server", "error", err)
 		os.Exit(1)
@@ -47,9 +60,6 @@ func main() {
 		IdleTimeout:       cfg.IdleTimeout,
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
 	go func() {
 		logger.Info("forge listening", "addr", cfg.Address, "env", cfg.Environment)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -58,7 +68,32 @@ func main() {
 		}
 	}()
 
+	var sshListener net.Listener
+	if cfg.SSHEnabled {
+		sshServer, err := sshgit.New(cfg, logger, st, repositories)
+		if err != nil {
+			logger.Error("initialize ssh server", "error", err)
+			os.Exit(1)
+		}
+		sshListener, err = net.Listen("tcp", cfg.SSHAddress)
+		if err != nil {
+			logger.Error("listen for ssh", "error", err, "addr", cfg.SSHAddress)
+			os.Exit(1)
+		}
+		go func() {
+			logger.Info("forge ssh listening", "addr", cfg.SSHAddress)
+			if err := sshServer.Serve(ctx, sshListener); err != nil && ctx.Err() == nil {
+				logger.Error("ssh server failed", "error", err)
+				stop()
+			}
+		}()
+	}
+
 	<-ctx.Done()
+
+	if sshListener != nil {
+		_ = sshListener.Close()
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()

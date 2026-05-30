@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/yashlunawat/forge/internal/config"
+	"github.com/yashlunawat/forge/internal/repository"
 	"github.com/yashlunawat/forge/internal/store/memory"
 )
 
@@ -18,24 +19,28 @@ func TestAuthAndRepositoryLifecycle(t *testing.T) {
 	t.Parallel()
 
 	reposRoot := t.TempDir()
-	app, err := New(
-		config.Config{
-			Environment:         "test",
-			BaseURL:             "http://localhost:3000",
-			CookieName:          "forge_session",
-			ReposRoot:           reposRoot,
-			Secret:              "test-secret",
-			SessionTTL:          time.Hour,
-			ReadTimeout:         time.Second,
-			WriteTimeout:        time.Second,
-			IdleTimeout:         time.Second,
-			ShutdownTimeout:     time.Second,
-			RequestTimeout:      time.Second,
-			MaxRequestBodyBytes: 1 << 20,
-		},
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		memory.NewStore(),
-	)
+	cfg := config.Config{
+		Environment:         "test",
+		BaseURL:             "http://localhost:3000",
+		CookieName:          "forge_session",
+		ReposRoot:           reposRoot,
+		Secret:              "test-secret",
+		SessionTTL:          time.Hour,
+		ReadTimeout:         time.Second,
+		WriteTimeout:        time.Second,
+		IdleTimeout:         time.Second,
+		ShutdownTimeout:     time.Second,
+		RequestTimeout:      time.Second,
+		MaxRequestBodyBytes: 1 << 20,
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	st := memory.NewStore()
+	repositories, err := repository.NewService(logger, st, reposRoot)
+	if err != nil {
+		t.Fatalf("new repository service: %v", err)
+	}
+	repositories.Start(t.Context())
+	app, err := New(cfg, logger, st, repositories)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -93,24 +98,28 @@ func TestUnauthorizedRepositoryAccess(t *testing.T) {
 	t.Parallel()
 
 	reposRoot := t.TempDir()
-	app, err := New(
-		config.Config{
-			Environment:         "test",
-			BaseURL:             "http://localhost:3000",
-			CookieName:          "forge_session",
-			ReposRoot:           reposRoot,
-			Secret:              "test-secret",
-			SessionTTL:          time.Hour,
-			ReadTimeout:         time.Second,
-			WriteTimeout:        time.Second,
-			IdleTimeout:         time.Second,
-			ShutdownTimeout:     time.Second,
-			RequestTimeout:      time.Second,
-			MaxRequestBodyBytes: 1 << 20,
-		},
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		memory.NewStore(),
-	)
+	cfg := config.Config{
+		Environment:         "test",
+		BaseURL:             "http://localhost:3000",
+		CookieName:          "forge_session",
+		ReposRoot:           reposRoot,
+		Secret:              "test-secret",
+		SessionTTL:          time.Hour,
+		ReadTimeout:         time.Second,
+		WriteTimeout:        time.Second,
+		IdleTimeout:         time.Second,
+		ShutdownTimeout:     time.Second,
+		RequestTimeout:      time.Second,
+		MaxRequestBodyBytes: 1 << 20,
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	st := memory.NewStore()
+	repositories, err := repository.NewService(logger, st, reposRoot)
+	if err != nil {
+		t.Fatalf("new repository service: %v", err)
+	}
+	repositories.Start(t.Context())
+	app, err := New(cfg, logger, st, repositories)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -125,24 +134,28 @@ func TestReadyzAndSecurityHeaders(t *testing.T) {
 	t.Parallel()
 
 	reposRoot := t.TempDir()
-	app, err := New(
-		config.Config{
-			Environment:         "test",
-			BaseURL:             "http://localhost:3000",
-			CookieName:          "forge_session",
-			ReposRoot:           reposRoot,
-			Secret:              "test-secret",
-			SessionTTL:          time.Hour,
-			ReadTimeout:         time.Second,
-			WriteTimeout:        time.Second,
-			IdleTimeout:         time.Second,
-			ShutdownTimeout:     time.Second,
-			RequestTimeout:      time.Second,
-			MaxRequestBodyBytes: 1 << 20,
-		},
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		memory.NewStore(),
-	)
+	cfg := config.Config{
+		Environment:         "test",
+		BaseURL:             "http://localhost:3000",
+		CookieName:          "forge_session",
+		ReposRoot:           reposRoot,
+		Secret:              "test-secret",
+		SessionTTL:          time.Hour,
+		ReadTimeout:         time.Second,
+		WriteTimeout:        time.Second,
+		IdleTimeout:         time.Second,
+		ShutdownTimeout:     time.Second,
+		RequestTimeout:      time.Second,
+		MaxRequestBodyBytes: 1 << 20,
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	st := memory.NewStore()
+	repositories, err := repository.NewService(logger, st, reposRoot)
+	if err != nil {
+		t.Fatalf("new repository service: %v", err)
+	}
+	repositories.Start(t.Context())
+	app, err := New(cfg, logger, st, repositories)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}

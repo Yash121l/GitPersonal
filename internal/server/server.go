@@ -2,8 +2,11 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,6 +15,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	cryptossh "golang.org/x/crypto/ssh"
 
 	"github.com/yashlunawat/forge/internal/auth"
 	"github.com/yashlunawat/forge/internal/config"
@@ -55,6 +59,11 @@ type createRepoRequest struct {
 	DefaultBranch string `json:"default_branch"`
 }
 
+type createSSHKeyRequest struct {
+	Name      string `json:"name"`
+	PublicKey string `json:"public_key"`
+}
+
 type currentUserResponse struct {
 	User store.User `json:"user"`
 }
@@ -63,12 +72,7 @@ type repoListResponse struct {
 	Repositories []store.Repository `json:"repositories"`
 }
 
-func New(cfg config.Config, logger *slog.Logger, st store.Store) (*Server, error) {
-	repositories, err := repository.NewService(logger, st, cfg.ReposRoot)
-	if err != nil {
-		return nil, err
-	}
-
+func New(cfg config.Config, logger *slog.Logger, st store.Store, repositories *repository.Service) (*Server, error) {
 	s := &Server{
 		cfg:          cfg,
 		logger:       logger,
@@ -103,11 +107,14 @@ func (s *Server) routes() http.Handler {
 		})
 
 		r.With(s.requireAuth).Get("/me", s.handleCurrentUser)
+		r.With(s.requireAuth).Post("/keys", s.handleCreateSSHKey)
 
 		r.With(s.requireAuth).Get("/repos", s.handleListRepositories)
 		r.With(s.requireAuth).Post("/repos", s.handleCreateRepository)
 		r.With(s.requireAuth).Delete("/repos/{owner}/{repo}", s.handleDeleteRepository)
 	})
+
+	r.Handle("/git/*", http.HandlerFunc(s.handleGitHTTP))
 
 	return r
 }
@@ -172,7 +179,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.setSessionCookie(w, user); err != nil {
+	if err := s.setSessionCookie(r.Context(), w, user); err != nil {
 		s.logger.Error("set session cookie", "error", err)
 		s.writeError(r, w, http.StatusInternalServerError, errors.New("failed to start session"))
 		return
@@ -198,7 +205,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.setSessionCookie(w, user); err != nil {
+	if err := s.setSessionCookie(r.Context(), w, user); err != nil {
 		s.logger.Error("set session cookie", "error", err)
 		s.writeError(r, w, http.StatusInternalServerError, errors.New("failed to start session"))
 		return
@@ -207,7 +214,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, currentUserResponse{User: user})
 }
 
-func (s *Server) handleLogout(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie(s.cfg.CookieName); err == nil {
+		if claims, err := auth.ParseToken(s.cfg.Secret, cookie.Value); err == nil && claims.ID != "" {
+			if err := s.store.RevokeSession(r.Context(), claims.ID, time.Now().UTC()); err != nil && !errors.Is(err, store.ErrNotFound) {
+				s.logger.Warn("revoke session", "error", err, "token_id", claims.ID)
+			}
+		}
+	}
+
 	http.SetCookie(w, &http.Cookie{
 		Name:     s.cfg.CookieName,
 		Value:    "",
@@ -323,34 +338,72 @@ func (s *Server) handleDeleteRepository(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) handleCreateSSHKey(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		s.writeError(r, w, http.StatusUnauthorized, errors.New("authentication required"))
+		return
+	}
+
+	var req createSSHKeyRequest
+	if err := s.decodeJSON(r, &req); err != nil {
+		s.writeError(r, w, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.PublicKey) == "" {
+		s.writeError(r, w, http.StatusBadRequest, errors.New("name and public_key are required"))
+		return
+	}
+
+	fingerprint, err := sshFingerprint(req.PublicKey)
+	if err != nil {
+		s.writeError(r, w, http.StatusBadRequest, err)
+		return
+	}
+
+	key, err := s.store.CreateSSHKey(r.Context(), store.CreateSSHKeyParams{
+		UserID:            user.ID,
+		Name:              strings.TrimSpace(req.Name),
+		PublicKey:         strings.TrimSpace(req.PublicKey),
+		FingerprintSHA256: fingerprint,
+	})
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, store.ErrAlreadyExists) {
+			status = http.StatusConflict
+		}
+		s.writeError(r, w, status, err)
+		return
+	}
+
+	s.writeJSON(w, http.StatusCreated, key)
+}
+
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie(s.cfg.CookieName)
+		user, err := s.authenticateRequest(r)
 		if err != nil {
 			s.writeError(r, w, http.StatusUnauthorized, errors.New("authentication required"))
 			return
 		}
 
-		claims, err := auth.ParseToken(s.cfg.Secret, cookie.Value)
-		if err != nil {
-			s.writeError(r, w, http.StatusUnauthorized, errors.New("invalid session"))
-			return
-		}
-
-		user, err := s.store.GetUserByUsername(r.Context(), claims.Username)
-		if err != nil {
-			s.writeError(r, w, http.StatusUnauthorized, errors.New("invalid session"))
-			return
-		}
-
-		ctx := context.WithValue(r.Context(), userContextKey, user)
+		ctx := context.WithValue(r.Context(), userContextKey, *user)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
-func (s *Server) setSessionCookie(w http.ResponseWriter, user store.User) error {
-	token, expiresAt, err := auth.NewToken(s.cfg.Secret, s.cfg.SessionTTL, user.ID, user.Username, user.Role, time.Now().UTC())
+func (s *Server) setSessionCookie(ctx context.Context, w http.ResponseWriter, user store.User) error {
+	now := time.Now().UTC()
+	tokenID := newOpaqueID()
+	token, expiresAt, err := auth.NewTokenWithID(s.cfg.Secret, tokenID, s.cfg.SessionTTL, user.ID, user.Username, user.Role, now)
 	if err != nil {
+		return err
+	}
+	if _, err := s.store.CreateSession(ctx, store.CreateSessionParams{
+		UserID:    user.ID,
+		TokenID:   tokenID,
+		ExpiresAt: expiresAt,
+	}); err != nil {
 		return err
 	}
 
@@ -420,6 +473,73 @@ func validateRepositoryName(name string) error {
 		return errors.New("repository name contains invalid characters")
 	}
 	return nil
+}
+
+func (s *Server) authenticateRequest(r *http.Request) (*store.User, error) {
+	if user, err := s.authenticateSession(r); err == nil {
+		return user, nil
+	}
+	if user, err := s.authenticateBasicAuth(r); err == nil {
+		return user, nil
+	}
+	return nil, store.ErrUnauthorized
+}
+
+func (s *Server) authenticateSession(r *http.Request) (*store.User, error) {
+	cookie, err := r.Cookie(s.cfg.CookieName)
+	if err != nil {
+		return nil, store.ErrUnauthorized
+	}
+
+	claims, err := auth.ParseToken(s.cfg.Secret, cookie.Value)
+	if err != nil || claims.ID == "" {
+		return nil, store.ErrUnauthorized
+	}
+
+	session, err := s.store.GetSessionByTokenID(r.Context(), claims.ID)
+	if err != nil {
+		return nil, store.ErrUnauthorized
+	}
+	if session.RevokedAt != nil || session.ExpiresAt.Before(time.Now().UTC()) {
+		return nil, store.ErrUnauthorized
+	}
+
+	user, err := s.store.GetUserByID(r.Context(), session.UserID)
+	if err != nil {
+		return nil, store.ErrUnauthorized
+	}
+	return &user, nil
+}
+
+func (s *Server) authenticateBasicAuth(r *http.Request) (*store.User, error) {
+	username, password, ok := r.BasicAuth()
+	if !ok {
+		return nil, store.ErrUnauthorized
+	}
+	user, err := s.store.GetUserByUsername(r.Context(), username)
+	if err != nil {
+		return nil, store.ErrUnauthorized
+	}
+	if err := auth.CheckPassword(user.PasswordHash, password); err != nil {
+		return nil, store.ErrUnauthorized
+	}
+	return &user, nil
+}
+
+func sshFingerprint(publicKey string) (string, error) {
+	parsedKey, _, _, _, err := cryptossh.ParseAuthorizedKey([]byte(strings.TrimSpace(publicKey)))
+	if err != nil {
+		return "", fmt.Errorf("parse public key: %w", err)
+	}
+	return cryptossh.FingerprintSHA256(parsedKey), nil
+}
+
+func newOpaqueID() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return fmt.Sprintf("%d", time.Now().UTC().UnixNano())
+	}
+	return hex.EncodeToString(raw[:])
 }
 
 func normalizeVisibility(visibility string) string {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/yashlunawat/forge/internal/store"
 )
@@ -13,13 +14,16 @@ type Service struct {
 	logger      *slog.Logger
 	store       store.Store
 	provisioner *FilesystemProvisioner
+	maintenance *MaintenanceScheduler
 }
 
 func NewService(logger *slog.Logger, st store.Store, reposRoot string) (*Service, error) {
+	provisioner := NewFilesystemProvisioner(reposRoot)
 	service := &Service{
 		logger:      logger,
 		store:       st,
-		provisioner: NewFilesystemProvisioner(reposRoot),
+		provisioner: provisioner,
+		maintenance: NewMaintenanceScheduler(logger, st, provisioner),
 	}
 	if err := service.Check(context.Background()); err != nil {
 		return nil, err
@@ -47,6 +51,7 @@ func (s *Service) CreateRepository(ctx context.Context, params store.CreateRepos
 			}
 			return err
 		}
+		s.maintenance.Enqueue(repository)
 		return nil
 	})
 	if err != nil {
@@ -92,4 +97,37 @@ func (s *Service) Check(ctx context.Context) error {
 		return err
 	}
 	return s.provisioner.Check(ctx)
+}
+
+func (s *Service) Start(ctx context.Context) {
+	s.maintenance.Start(ctx)
+}
+
+func (s *Service) GetRepository(ctx context.Context, owner, name string) (store.Repository, error) {
+	return s.store.GetRepositoryByOwnerAndName(ctx, owner, name)
+}
+
+func (s *Service) RelativeRepoPath(repository store.Repository) (string, error) {
+	return s.provisioner.RelativeRepoPath(repository.RepoPath)
+}
+
+func (s *Service) CanRead(user *store.User, repository store.Repository) bool {
+	if repository.Visibility == "public" {
+		return true
+	}
+	if user == nil {
+		return false
+	}
+	return strings.EqualFold(user.Username, repository.Owner) || user.Role == "owner"
+}
+
+func (s *Service) CanWrite(user *store.User, repository store.Repository) bool {
+	if user == nil {
+		return false
+	}
+	return strings.EqualFold(user.Username, repository.Owner) || user.Role == "owner"
+}
+
+func (s *Service) ScheduleMaintenance(repository store.Repository) {
+	s.maintenance.Enqueue(repository)
 }

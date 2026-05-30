@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -16,6 +18,10 @@ type Claims struct {
 }
 
 func NewToken(secret string, ttl time.Duration, userID int64, username, role string, now time.Time) (string, time.Time, error) {
+	return NewTokenWithID(secret, newTokenID(), ttl, userID, username, role, now)
+}
+
+func NewTokenWithID(secret, tokenID string, ttl time.Duration, userID int64, username, role string, now time.Time) (string, time.Time, error) {
 	expiresAt := now.Add(ttl)
 	claims := Claims{
 		UserID:   userID,
@@ -25,6 +31,7 @@ func NewToken(secret string, ttl time.Duration, userID int64, username, role str
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(now),
 			Subject:   fmt.Sprintf("%d", userID),
+			ID:        tokenID,
 		},
 	}
 
@@ -54,4 +61,12 @@ func ParseToken(secret, tokenValue string) (*Claims, error) {
 	}
 
 	return claims, nil
+}
+
+func newTokenID() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return fmt.Sprintf("%d", time.Now().UTC().UnixNano())
+	}
+	return hex.EncodeToString(raw[:])
 }

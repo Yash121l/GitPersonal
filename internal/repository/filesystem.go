@@ -34,6 +34,17 @@ func (p *FilesystemProvisioner) RepoPath(owner, name string) string {
 	return filepath.Join(p.root, prefixA, prefixB, slug(owner), slug(name)+".git")
 }
 
+func (p *FilesystemProvisioner) RelativeRepoPath(path string) (string, error) {
+	if err := p.ensureManagedPath(path); err != nil {
+		return "", err
+	}
+	relative, err := filepath.Rel(p.root, path)
+	if err != nil {
+		return "", fmt.Errorf("resolve relative repo path: %w", err)
+	}
+	return filepath.ToSlash(relative), nil
+}
+
 func (p *FilesystemProvisioner) CreateBareRepository(ctx context.Context, owner, name, defaultBranch string) (string, error) {
 	if err := p.EnsureStorageLayout(); err != nil {
 		return "", err
@@ -203,4 +214,9 @@ func (p *FilesystemProvisioner) runGit(ctx context.Context, args ...string) (str
 	command := exec.CommandContext(ctx, p.gitBin, args...)
 	output, err := command.CombinedOutput()
 	return string(output), err
+}
+
+func (p *FilesystemProvisioner) RunGit(ctx context.Context, repoPath string, args ...string) (string, error) {
+	commandArgs := append([]string{"--git-dir", repoPath}, args...)
+	return p.runGit(ctx, commandArgs...)
 }
