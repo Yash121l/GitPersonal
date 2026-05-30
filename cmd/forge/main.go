@@ -32,12 +32,19 @@ func main() {
 	}
 	defer closeStore()
 
-	app := server.New(cfg, logger, st)
+	app, err := server.New(cfg, logger, st)
+	if err != nil {
+		logger.Error("initialize server", "error", err)
+		os.Exit(1)
+	}
 
 	httpServer := &http.Server{
 		Addr:              cfg.Address,
 		Handler:           app.Router(),
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       cfg.ReadTimeout,
+		WriteTimeout:      cfg.WriteTimeout,
+		IdleTimeout:       cfg.IdleTimeout,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -53,7 +60,7 @@ func main() {
 
 	<-ctx.Done()
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
@@ -78,7 +85,7 @@ func loadStore(ctx context.Context, logger *slog.Logger, cfg config.Config) (sto
 		return memory.NewStore(), func() {}, nil
 	}
 
-	db, err := database.OpenPostgres(ctx, cfg.DatabaseURL)
+	db, err := database.OpenPostgres(ctx, cfg)
 	if err != nil {
 		return nil, nil, err
 	}

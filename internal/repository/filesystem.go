@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -24,34 +26,56 @@ func NewFilesystemProvisioner(root string) *FilesystemProvisioner {
 }
 
 func (p *FilesystemProvisioner) RepoPath(owner, name string) string {
-	return filepath.Join(p.root, slug(owner), slug(name)+".git")
+	key := slug(owner) + "/" + slug(name)
+	sum := sha256.Sum256([]byte(key))
+	prefixA := hex.EncodeToString(sum[:1])
+	prefixB := hex.EncodeToString(sum[1:2])
+
+	return filepath.Join(p.root, prefixA, prefixB, slug(owner), slug(name)+".git")
 }
 
 func (p *FilesystemProvisioner) CreateBareRepository(ctx context.Context, owner, name, defaultBranch string) (string, error) {
+	if err := p.EnsureStorageLayout(); err != nil {
+		return "", err
+	}
+
 	repoPath := p.RepoPath(owner, name)
 	if defaultBranch == "" {
 		defaultBranch = "main"
 	}
 
-	if err := os.MkdirAll(filepath.Dir(repoPath), 0o755); err != nil {
-		return "", fmt.Errorf("create repo parent directory: %w", err)
-	}
 	if _, err := os.Stat(repoPath); err == nil {
 		return "", os.ErrExist
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("stat repo path: %w", err)
 	}
 
-	command := exec.CommandContext(ctx, p.gitBin, "init", "--bare", "--quiet", repoPath)
-	if output, err := command.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("git init --bare: %w: %s", err, strings.TrimSpace(string(output)))
+	stagingPath := filepath.Join(p.root, ".staging", fmt.Sprintf("%d-%s.git", time.Now().UTC().UnixNano(), slug(name)))
+	if output, err := p.runGit(ctx, "init", "--bare", "--quiet", "--shared=group", stagingPath); err != nil {
+		return "", fmt.Errorf("git init --bare: %w: %s", err, strings.TrimSpace(output))
+	}
+	if err := p.configureRepository(ctx, stagingPath); err != nil {
+		_ = os.RemoveAll(stagingPath)
+		return "", err
 	}
 
-	headPath := filepath.Join(repoPath, "HEAD")
+	headPath := filepath.Join(stagingPath, "HEAD")
 	headContents := []byte("ref: refs/heads/" + defaultBranch + "\n")
 	if err := os.WriteFile(headPath, headContents, 0o644); err != nil {
-		_ = os.RemoveAll(repoPath)
+		_ = os.RemoveAll(stagingPath)
 		return "", fmt.Errorf("write HEAD file: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(repoPath), 0o755); err != nil {
+		_ = os.RemoveAll(stagingPath)
+		return "", fmt.Errorf("create repo parent directory: %w", err)
+	}
+	if err := os.Rename(stagingPath, repoPath); err != nil {
+		_ = os.RemoveAll(stagingPath)
+		if errors.Is(err, os.ErrExist) {
+			return "", os.ErrExist
+		}
+		return "", fmt.Errorf("move repo into place: %w", err)
 	}
 
 	return repoPath, nil
@@ -103,6 +127,35 @@ func (p *FilesystemProvisioner) StageDelete(path string) (string, func() error, 
 	return trashPath, restore, nil
 }
 
+func (p *FilesystemProvisioner) EnsureStorageLayout() error {
+	for _, path := range []string{
+		p.root,
+		filepath.Join(p.root, ".staging"),
+		filepath.Join(p.root, ".trash"),
+	} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			return fmt.Errorf("create storage path %s: %w", path, err)
+		}
+	}
+
+	return nil
+}
+
+func (p *FilesystemProvisioner) Check(ctx context.Context) error {
+	if _, err := exec.LookPath(p.gitBin); err != nil {
+		return fmt.Errorf("resolve git binary: %w", err)
+	}
+	if err := p.EnsureStorageLayout(); err != nil {
+		return err
+	}
+
+	probeDir, err := os.MkdirTemp(filepath.Join(p.root, ".staging"), "probe-*")
+	if err != nil {
+		return fmt.Errorf("write probe in staging area: %w", err)
+	}
+	return os.RemoveAll(probeDir)
+}
+
 func slug(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }
@@ -123,4 +176,31 @@ func (p *FilesystemProvisioner) ensureManagedPath(path string) error {
 	}
 
 	return nil
+}
+
+func (p *FilesystemProvisioner) configureRepository(ctx context.Context, repoPath string) error {
+	configPairs := [][2]string{
+		{"core.sharedRepository", "group"},
+		{"gc.auto", "0"},
+		{"receive.autogc", "false"},
+		{"core.logAllRefUpdates", "true"},
+		{"repack.writeBitmaps", "true"},
+		{"fetch.writeCommitGraph", "true"},
+		{"commitGraph.generationVersion", "2"},
+		{"pack.useSparse", "true"},
+	}
+
+	for _, pair := range configPairs {
+		if output, err := p.runGit(ctx, "--git-dir", repoPath, "config", pair[0], pair[1]); err != nil {
+			return fmt.Errorf("configure repo %s=%s: %w: %s", pair[0], pair[1], err, strings.TrimSpace(output))
+		}
+	}
+
+	return nil
+}
+
+func (p *FilesystemProvisioner) runGit(ctx context.Context, args ...string) (string, error) {
+	command := exec.CommandContext(ctx, p.gitBin, args...)
+	output, err := command.CombinedOutput()
+	return string(output), err
 }

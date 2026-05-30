@@ -16,6 +16,9 @@ type Store struct {
 	users     map[string]store.User
 	repos     map[string]store.Repository
 	userRepos map[string][]string
+
+	lockMu    sync.Mutex
+	repoLocks map[string]*sync.Mutex
 }
 
 func NewStore() *Store {
@@ -24,6 +27,7 @@ func NewStore() *Store {
 		users:     make(map[string]store.User),
 		repos:     make(map[string]store.Repository),
 		userRepos: make(map[string][]string),
+		repoLocks: make(map[string]*sync.Mutex),
 	}
 }
 
@@ -145,6 +149,18 @@ func (s *Store) DeleteRepository(_ context.Context, owner, name string) error {
 	return nil
 }
 
+func (s *Store) WithRepositoryLease(ctx context.Context, owner, name string, fn func(context.Context) error) error {
+	mutex := s.repoMutex(owner, name)
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	return fn(ctx)
+}
+
+func (s *Store) Check(_ context.Context) error {
+	return nil
+}
+
 func (s *Store) next() int64 {
 	id := s.nextID
 	s.nextID++
@@ -157,4 +173,20 @@ func repoKey(owner, name string) string {
 
 func normalize(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func (s *Store) repoMutex(owner, name string) *sync.Mutex {
+	key := repoKey(owner, name)
+
+	s.lockMu.Lock()
+	defer s.lockMu.Unlock()
+
+	mutex, ok := s.repoLocks[key]
+	if ok {
+		return mutex
+	}
+
+	mutex = &sync.Mutex{}
+	s.repoLocks[key] = mutex
+	return mutex
 }

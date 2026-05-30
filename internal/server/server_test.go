@@ -18,18 +18,27 @@ func TestAuthAndRepositoryLifecycle(t *testing.T) {
 	t.Parallel()
 
 	reposRoot := t.TempDir()
-	app := New(
+	app, err := New(
 		config.Config{
-			Environment: "test",
-			BaseURL:     "http://localhost:3000",
-			CookieName:  "forge_session",
-			ReposRoot:   reposRoot,
-			Secret:      "test-secret",
-			SessionTTL:  time.Hour,
+			Environment:         "test",
+			BaseURL:             "http://localhost:3000",
+			CookieName:          "forge_session",
+			ReposRoot:           reposRoot,
+			Secret:              "test-secret",
+			SessionTTL:          time.Hour,
+			ReadTimeout:         time.Second,
+			WriteTimeout:        time.Second,
+			IdleTimeout:         time.Second,
+			ShutdownTimeout:     time.Second,
+			RequestTimeout:      time.Second,
+			MaxRequestBodyBytes: 1 << 20,
 		},
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		memory.NewStore(),
 	)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
 
 	registerBody := map[string]string{
 		"username": "yash",
@@ -84,21 +93,69 @@ func TestUnauthorizedRepositoryAccess(t *testing.T) {
 	t.Parallel()
 
 	reposRoot := t.TempDir()
-	app := New(
+	app, err := New(
 		config.Config{
-			Environment: "test",
-			BaseURL:     "http://localhost:3000",
-			CookieName:  "forge_session",
-			ReposRoot:   reposRoot,
-			Secret:      "test-secret",
+			Environment:         "test",
+			BaseURL:             "http://localhost:3000",
+			CookieName:          "forge_session",
+			ReposRoot:           reposRoot,
+			Secret:              "test-secret",
+			SessionTTL:          time.Hour,
+			ReadTimeout:         time.Second,
+			WriteTimeout:        time.Second,
+			IdleTimeout:         time.Second,
+			ShutdownTimeout:     time.Second,
+			RequestTimeout:      time.Second,
+			MaxRequestBodyBytes: 1 << 20,
 		},
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		memory.NewStore(),
 	)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
 
 	recorder := performJSONRequest(t, app.Router(), http.MethodGet, "/api/v1/repos", nil, nil)
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestReadyzAndSecurityHeaders(t *testing.T) {
+	t.Parallel()
+
+	reposRoot := t.TempDir()
+	app, err := New(
+		config.Config{
+			Environment:         "test",
+			BaseURL:             "http://localhost:3000",
+			CookieName:          "forge_session",
+			ReposRoot:           reposRoot,
+			Secret:              "test-secret",
+			SessionTTL:          time.Hour,
+			ReadTimeout:         time.Second,
+			WriteTimeout:        time.Second,
+			IdleTimeout:         time.Second,
+			ShutdownTimeout:     time.Second,
+			RequestTimeout:      time.Second,
+			MaxRequestBodyBytes: 1 << 20,
+		},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		memory.NewStore(),
+	)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+
+	recorder := performJSONRequest(t, app.Router(), http.MethodGet, "/readyz", nil, nil)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if recorder.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("missing security header")
+	}
+	if recorder.Header().Get("X-Request-Id") == "" {
+		t.Fatalf("missing request id header")
 	}
 }
 

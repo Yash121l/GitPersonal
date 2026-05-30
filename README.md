@@ -7,12 +7,14 @@ Forge is a self-hosted Git platform for small trusted groups. This repository cu
 Implemented in this bootstrap:
 
 - HTTP server with graceful shutdown and structured logging
-- `GET /healthz` readiness endpoint
+- `GET /healthz` liveness endpoint and `GET /readyz` dependency readiness checks
 - JWT cookie auth with register, login, logout, and current-user endpoints
 - Repository CRUD API scaffold with ownership checks
 - PostgreSQL-backed store when `DATABASE_URL` is set, with in-memory fallback for tests and no-DB runs
-- Bare repository provisioning under `FORGE_REPOS_ROOT` on create/delete
+- Sharded bare repository provisioning under `FORGE_REPOS_ROOT` with atomic staging, safe deletion, and repo-level mutation locking
 - Embedded PostgreSQL migrations applied automatically on startup
+- Production-oriented config validation, database pool tuning, request IDs, body limits, and baseline security headers
+- Non-root container runtime, health checks, and safer compose defaults for internal deployment
 - `docker-compose.yml`, `Dockerfile`, and `sqlc` configuration to anchor local development
 
 Not implemented yet:
@@ -39,6 +41,7 @@ go run ./cmd/forge
 The current API is JSON-only.
 
 - `GET /healthz`
+- `GET /readyz`
 - `POST /api/v1/auth/register`
 - `POST /api/v1/auth/login`
 - `POST /api/v1/auth/logout`
@@ -80,6 +83,10 @@ Example repository creation request:
 - `db/queries`: starter `sqlc` query definitions
 - `deploy`: container and reverse proxy assets
 
+## Architecture Note
+
+Bare repositories on disk are still the correct Git storage primitive here. The scaling work is in the operational layer around them: sharded layout, atomic provisioning, coordinated mutations, background maintenance, transport isolation, and indexing.
+
 ## Next Build Step
 
-The natural next step is to layer in git smart HTTP / SSH transport and post-receive indexing against the provisioned bare repositories.
+The natural next step is to layer in git smart HTTP / SSH transport and post-receive indexing against the provisioned repositories, followed by background maintenance tasks such as scheduled `git gc` / commit-graph refresh instead of running expensive maintenance inline with user requests.

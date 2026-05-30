@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"errors"
+	"hash/fnv"
+	"strings"
 	"time"
 )
 
@@ -52,4 +54,14 @@ type Store interface {
 	GetRepositoryByOwnerAndName(ctx context.Context, owner, name string) (Repository, error)
 	ListRepositoriesByOwner(ctx context.Context, owner string) ([]Repository, error)
 	DeleteRepository(ctx context.Context, owner, name string) error
+	WithRepositoryLease(ctx context.Context, owner, name string, fn func(context.Context) error) error
+	Check(ctx context.Context) error
+}
+
+func RepositoryLeaseKey(owner, name string) int64 {
+	hasher := fnv.New64a()
+	_, _ = hasher.Write([]byte(strings.ToLower(strings.TrimSpace(owner))))
+	_, _ = hasher.Write([]byte("/"))
+	_, _ = hasher.Write([]byte(strings.ToLower(strings.TrimSpace(name))))
+	return int64(hasher.Sum64())
 }

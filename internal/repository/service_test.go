@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yashlunawat/forge/internal/store"
@@ -18,7 +19,10 @@ func TestCreateAndDeleteRepositoryProvisioning(t *testing.T) {
 	reposRoot := t.TempDir()
 	st := memory.NewStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	service := NewService(logger, st, reposRoot)
+	service, err := NewService(logger, st, reposRoot)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
 
 	if _, err := st.CreateUser(context.Background(), "yash", "hash", "member"); err != nil {
 		t.Fatalf("create user: %v", err)
@@ -55,5 +59,27 @@ func TestCreateAndDeleteRepositoryProvisioning(t *testing.T) {
 	}
 	if _, err := os.Stat(repository.RepoPath); !os.IsNotExist(err) {
 		t.Fatalf("expected repo path to be removed, stat err = %v", err)
+	}
+}
+
+func TestRepoPathUsesFanoutLayout(t *testing.T) {
+	t.Parallel()
+
+	provisioner := NewFilesystemProvisioner("/data/repos")
+	path := provisioner.RepoPath("Yash", "Forge")
+
+	if filepath.Base(path) != "forge.git" {
+		t.Fatalf("unexpected repo basename: %s", path)
+	}
+	relative, err := filepath.Rel("/data/repos", path)
+	if err != nil {
+		t.Fatalf("relative repo path: %v", err)
+	}
+	parts := strings.Split(relative, string(filepath.Separator))
+	if len(parts) != 4 {
+		t.Fatalf("expected sharded path with 4 parts, got %v", parts)
+	}
+	if len(parts[0]) != 2 || len(parts[1]) != 2 {
+		t.Fatalf("expected 2-byte shard prefixes, got %v", parts[:2])
 	}
 }

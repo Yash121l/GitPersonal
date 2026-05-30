@@ -73,6 +73,8 @@ USING users u
 WHERE r.owner_user_id = u.id
   AND lower(u.username) = lower($1)
   AND lower(r.name) = lower($2)`
+
+	repositoryLeaseQuery = `SELECT pg_advisory_xact_lock($1)`
 )
 
 type Store struct {
@@ -232,6 +234,29 @@ func (s *Store) DeleteRepository(ctx context.Context, owner, name string) error 
 	}
 
 	return nil
+}
+
+func (s *Store) WithRepositoryLease(ctx context.Context, owner, name string, fn func(context.Context) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, repositoryLeaseQuery, store.RepositoryLeaseKey(owner, name)); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	if err := fn(ctx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (s *Store) Check(ctx context.Context) error {
+	return s.db.PingContext(ctx)
 }
 
 func isUniqueViolation(err error) bool {

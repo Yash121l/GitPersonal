@@ -17,7 +17,16 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )`
 
+const migrationLockKey int64 = 424242424242
+
 func Migrate(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, migrationLockKey); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	defer func() {
+		_, _ = db.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, migrationLockKey)
+	}()
+
 	if _, err := db.ExecContext(ctx, ensureMigrationsTableQuery); err != nil {
 		return fmt.Errorf("ensure schema_migrations table: %w", err)
 	}

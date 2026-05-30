@@ -12,9 +12,15 @@ FROM alpine:3.20
 
 WORKDIR /app
 
-RUN apk add --no-cache ca-certificates git
+RUN apk add --no-cache ca-certificates git \
+	&& addgroup -S forge \
+	&& adduser -S -G forge -h /app forge \
+	&& mkdir -p /data/repos /app \
+	&& chown -R forge:forge /app /data
 
 COPY --from=build /out/forge /usr/local/bin/forge
+
+USER forge
 
 EXPOSE 3000
 
