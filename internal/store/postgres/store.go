@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -147,6 +148,9 @@ WHERE k.fingerprint_sha256 = $1`
 UPDATE ssh_keys
 SET last_used_at = $2
 WHERE fingerprint_sha256 = $1`
+
+	acquireRepositoryLeaseQuery = `
+SELECT pg_advisory_xact_lock($1)`
 )
 
 type Store struct {
@@ -441,7 +445,37 @@ func (s *Store) TouchSSHKeyUsage(ctx context.Context, fingerprint string, usedAt
 }
 
 func (s *Store) WithRepositoryLease(ctx context.Context, owner, name string, fn func(context.Context) error) error {
-	return fn(ctx)
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire repository lease connection: %w", err)
+	}
+	defer conn.Close()
+
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin repository lease transaction: %w", err)
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.ExecContext(ctx, acquireRepositoryLeaseQuery, store.RepositoryLeaseKey(owner, name)); err != nil {
+		return fmt.Errorf("acquire repository lease: %w", err)
+	}
+
+	if err := fn(ctx); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit repository lease transaction: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 func (s *Store) Check(ctx context.Context) error {
