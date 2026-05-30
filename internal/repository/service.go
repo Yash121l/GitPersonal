@@ -21,6 +21,7 @@ type Service struct {
 	store       store.Store
 	provisioner *FilesystemProvisioner
 	maintenance *MaintenanceScheduler
+	webhooks    *WebhookDispatcher
 }
 
 func NewService(logger *slog.Logger, st store.Store, reposRoot string) (*Service, error) {
@@ -30,6 +31,7 @@ func NewService(logger *slog.Logger, st store.Store, reposRoot string) (*Service
 		store:       st,
 		provisioner: provisioner,
 		maintenance: NewMaintenanceScheduler(logger, st, provisioner),
+		webhooks:    NewWebhookDispatcher(logger, st),
 	}
 	if err := service.Check(context.Background()); err != nil {
 		return nil, err
@@ -67,9 +69,13 @@ func (s *Service) CreateRepository(ctx context.Context, params store.CreateRepos
 	return repository, nil
 }
 
-func (s *Service) DeleteRepository(ctx context.Context, owner, name string) error {
+func (s *Service) DeleteRepository(ctx context.Context, owner, name string, actor *store.User) error {
 	return s.store.WithRepositoryLease(ctx, owner, name, func(ctx context.Context) error {
 		repository, err := s.store.GetRepositoryByOwnerAndName(ctx, owner, name)
+		if err != nil {
+			return err
+		}
+		webhooks, err := s.store.ListRepositoryWebhooks(ctx, owner, name)
 		if err != nil {
 			return err
 		}
@@ -94,6 +100,8 @@ func (s *Service) DeleteRepository(ctx context.Context, owner, name string) erro
 			}
 		}
 
+		s.webhooks.EnqueueRepositoryEventWithHooks(repository, store.RepositoryWebhookEventDeleted, actor, webhooks)
+
 		return nil
 	})
 }
@@ -107,6 +115,7 @@ func (s *Service) Check(ctx context.Context) error {
 
 func (s *Service) Start(ctx context.Context) {
 	s.maintenance.Start(ctx)
+	s.webhooks.Start(ctx)
 }
 
 func (s *Service) GetRepository(ctx context.Context, owner, name string) (store.Repository, error) {
@@ -197,4 +206,8 @@ func (s *Service) CanAdmin(ctx context.Context, user *store.User, repository sto
 
 func (s *Service) ScheduleMaintenance(repository store.Repository) {
 	s.maintenance.Enqueue(repository)
+}
+
+func (s *Service) EmitRepositoryEvent(ctx context.Context, repository store.Repository, event string, actor *store.User) {
+	s.webhooks.EnqueueRepositoryEvent(ctx, repository, event, actor)
 }

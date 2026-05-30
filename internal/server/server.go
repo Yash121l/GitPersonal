@@ -10,7 +10,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -82,6 +84,12 @@ type addRepositoryCollaboratorRequest struct {
 	Role     string `json:"role"`
 }
 
+type createRepositoryWebhookRequest struct {
+	URL    string   `json:"url"`
+	Secret string   `json:"secret"`
+	Events []string `json:"events"`
+}
+
 type currentUserResponse struct {
 	User store.User `json:"user"`
 }
@@ -102,6 +110,10 @@ type repositoryDetailResponse struct {
 	Repository   store.Repository `json:"repository"`
 	HTTPCloneURL string           `json:"http_clone_url"`
 	SSHCloneURL  string           `json:"ssh_clone_url,omitempty"`
+}
+
+type repositoryWebhookListResponse struct {
+	Webhooks []store.RepositoryWebhook `json:"webhooks"`
 }
 
 func New(cfg config.Config, logger *slog.Logger, st store.Store, repositories *repository.Service) (*Server, error) {
@@ -160,6 +172,9 @@ func (s *Server) routes() http.Handler {
 		r.With(s.requireAuth).Post("/repos", s.handleCreateRepository)
 		r.With(s.requireAuth).Delete("/repos/{owner}/{repo}", s.handleDeleteRepository)
 		r.With(s.requireAuth).Post("/repos/{owner}/{repo}/collaborators", s.handleAddRepositoryCollaborator)
+		r.With(s.requireAuth).Get("/repos/{owner}/{repo}/webhooks", s.handleListRepositoryWebhooks)
+		r.With(s.requireAuth).Post("/repos/{owner}/{repo}/webhooks", s.handleCreateRepositoryWebhook)
+		r.With(s.requireAuth).Delete("/repos/{owner}/{repo}/webhooks/{webhookID}", s.handleDeleteRepositoryWebhook)
 	})
 
 	r.Handle("/git/*", http.HandlerFunc(s.handleGitHTTP))
@@ -567,7 +582,7 @@ func (s *Server) handleDeleteRepository(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := s.repositories.DeleteRepository(r.Context(), owner, repo); err != nil {
+	if err := s.repositories.DeleteRepository(r.Context(), owner, repo, &user); err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, store.ErrNotFound) {
 			status = http.StatusNotFound
@@ -640,6 +655,144 @@ func (s *Server) handleAddRepositoryCollaborator(w http.ResponseWriter, r *http.
 	s.writeJSON(w, http.StatusCreated, collaborator)
 }
 
+func (s *Server) handleListRepositoryWebhooks(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		s.writeError(r, w, http.StatusUnauthorized, errors.New("authentication required"))
+		return
+	}
+
+	owner := chi.URLParam(r, "owner")
+	repoName := chi.URLParam(r, "repo")
+	repository, err := s.repositories.GetRepository(r.Context(), owner, repoName)
+	if err != nil {
+		s.writeError(r, w, http.StatusNotFound, errors.New("repository not found"))
+		return
+	}
+	canAdmin, err := s.repositories.CanAdmin(r.Context(), &user, repository)
+	if err != nil {
+		s.writeError(r, w, http.StatusInternalServerError, errors.New("failed to authorize repository access"))
+		return
+	}
+	if !canAdmin {
+		s.writeError(r, w, http.StatusForbidden, errors.New("repository admin access required"))
+		return
+	}
+
+	webhooks, err := s.store.ListRepositoryWebhooks(r.Context(), owner, repoName)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, store.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		s.writeError(r, w, status, err)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, repositoryWebhookListResponse{Webhooks: webhooks})
+}
+
+func (s *Server) handleCreateRepositoryWebhook(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		s.writeError(r, w, http.StatusUnauthorized, errors.New("authentication required"))
+		return
+	}
+
+	owner := chi.URLParam(r, "owner")
+	repoName := chi.URLParam(r, "repo")
+	repository, err := s.repositories.GetRepository(r.Context(), owner, repoName)
+	if err != nil {
+		s.writeError(r, w, http.StatusNotFound, errors.New("repository not found"))
+		return
+	}
+	canAdmin, err := s.repositories.CanAdmin(r.Context(), &user, repository)
+	if err != nil {
+		s.writeError(r, w, http.StatusInternalServerError, errors.New("failed to authorize repository access"))
+		return
+	}
+	if !canAdmin {
+		s.writeError(r, w, http.StatusForbidden, errors.New("repository admin access required"))
+		return
+	}
+
+	var req createRepositoryWebhookRequest
+	if err := s.decodeJSON(r, &req); err != nil {
+		s.writeError(r, w, http.StatusBadRequest, err)
+		return
+	}
+	req.URL = strings.TrimSpace(req.URL)
+	if err := validateWebhookURL(req.URL); err != nil {
+		s.writeError(r, w, http.StatusBadRequest, err)
+		return
+	}
+	events, err := store.NormalizeRepositoryWebhookEvents(req.Events)
+	if err != nil {
+		s.writeError(r, w, http.StatusBadRequest, errors.New("webhook events must only include repository.push or repository.deleted"))
+		return
+	}
+
+	webhook, err := s.store.CreateRepositoryWebhook(r.Context(), store.CreateRepositoryWebhookParams{
+		Owner:    owner,
+		RepoName: repoName,
+		URL:      req.URL,
+		Secret:   req.Secret,
+		Events:   events,
+	})
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, store.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		s.writeError(r, w, status, err)
+		return
+	}
+
+	s.writeJSON(w, http.StatusCreated, webhook)
+}
+
+func (s *Server) handleDeleteRepositoryWebhook(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		s.writeError(r, w, http.StatusUnauthorized, errors.New("authentication required"))
+		return
+	}
+
+	owner := chi.URLParam(r, "owner")
+	repoName := chi.URLParam(r, "repo")
+	repository, err := s.repositories.GetRepository(r.Context(), owner, repoName)
+	if err != nil {
+		s.writeError(r, w, http.StatusNotFound, errors.New("repository not found"))
+		return
+	}
+	canAdmin, err := s.repositories.CanAdmin(r.Context(), &user, repository)
+	if err != nil {
+		s.writeError(r, w, http.StatusInternalServerError, errors.New("failed to authorize repository access"))
+		return
+	}
+	if !canAdmin {
+		s.writeError(r, w, http.StatusForbidden, errors.New("repository admin access required"))
+		return
+	}
+
+	webhookID, err := strconv.ParseInt(chi.URLParam(r, "webhookID"), 10, 64)
+	if err != nil || webhookID <= 0 {
+		s.writeError(r, w, http.StatusBadRequest, errors.New("invalid webhook id"))
+		return
+	}
+
+	if err := s.store.DeleteRepositoryWebhook(r.Context(), owner, repoName, webhookID); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, store.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		s.writeError(r, w, status, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleCreateSSHKey(w http.ResponseWriter, r *http.Request) {
 	user, ok := userFromContext(r.Context())
 	if !ok {
@@ -696,6 +849,20 @@ func (s *Server) handleListSSHKeys(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusOK, sshKeyListResponse{Keys: keys})
+}
+
+func validateWebhookURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return errors.New("webhook url must be valid")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return errors.New("webhook url must use http or https")
+	}
+	if parsed.Host == "" {
+		return errors.New("webhook url must include a host")
+	}
+	return nil
 }
 
 func (s *Server) requireAuth(next http.Handler) http.Handler {

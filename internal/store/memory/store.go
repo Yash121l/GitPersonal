@@ -19,6 +19,7 @@ type Store struct {
 	repos               map[string]store.Repository
 	ownerRepos          map[string][]string
 	repoCollaborators   map[string]map[int64]store.RepositoryCollaborator
+	repoWebhooks        map[string]map[int64]store.RepositoryWebhook
 	sessions            map[string]store.Session
 	sshKeys             map[string]store.SSHKey
 
@@ -36,6 +37,7 @@ func NewStore() *Store {
 		repos:               make(map[string]store.Repository),
 		ownerRepos:          make(map[string][]string),
 		repoCollaborators:   make(map[string]map[int64]store.RepositoryCollaborator),
+		repoWebhooks:        make(map[string]map[int64]store.RepositoryWebhook),
 		sessions:            make(map[string]store.Session),
 		sshKeys:             make(map[string]store.SSHKey),
 		repoLocks:           make(map[string]*sync.Mutex),
@@ -395,6 +397,114 @@ func (s *Store) GetRepositoryCollaborator(_ context.Context, owner, repoName str
 	return collaborator, nil
 }
 
+func (s *Store) CreateRepositoryWebhook(_ context.Context, params store.CreateRepositoryWebhookParams) (store.RepositoryWebhook, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	repository, ok := s.repos[repoKey(params.Owner, params.RepoName)]
+	if !ok {
+		return store.RepositoryWebhook{}, store.ErrNotFound
+	}
+
+	events, err := store.NormalizeRepositoryWebhookEvents(params.Events)
+	if err != nil {
+		return store.RepositoryWebhook{}, err
+	}
+
+	key := repoKey(repository.Owner, repository.Name)
+	if _, ok := s.repoWebhooks[key]; !ok {
+		s.repoWebhooks[key] = make(map[int64]store.RepositoryWebhook)
+	}
+
+	webhook := store.RepositoryWebhook{
+		ID:           s.next(),
+		RepositoryID: repository.ID,
+		URL:          params.URL,
+		Secret:       params.Secret,
+		Events:       append([]string(nil), events...),
+		CreatedAt:    time.Now().UTC(),
+	}
+	s.repoWebhooks[key][webhook.ID] = webhook
+	return webhook, nil
+}
+
+func (s *Store) ListRepositoryWebhooks(_ context.Context, owner, repoName string) ([]store.RepositoryWebhook, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	repository, ok := s.repos[repoKey(owner, repoName)]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+
+	webhooksMap, ok := s.repoWebhooks[repoKey(repository.Owner, repository.Name)]
+	if !ok {
+		return []store.RepositoryWebhook{}, nil
+	}
+
+	webhooks := make([]store.RepositoryWebhook, 0, len(webhooksMap))
+	for _, webhook := range webhooksMap {
+		webhook.Events = append([]string(nil), webhook.Events...)
+		webhooks = append(webhooks, webhook)
+	}
+	sort.Slice(webhooks, func(i, j int) bool {
+		if webhooks[i].CreatedAt.Equal(webhooks[j].CreatedAt) {
+			return webhooks[i].ID < webhooks[j].ID
+		}
+		return webhooks[i].CreatedAt.Before(webhooks[j].CreatedAt)
+	})
+	return webhooks, nil
+}
+
+func (s *Store) DeleteRepositoryWebhook(_ context.Context, owner, repoName string, webhookID int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	repository, ok := s.repos[repoKey(owner, repoName)]
+	if !ok {
+		return store.ErrNotFound
+	}
+
+	key := repoKey(repository.Owner, repository.Name)
+	webhooks, ok := s.repoWebhooks[key]
+	if !ok {
+		return store.ErrNotFound
+	}
+	if _, ok := webhooks[webhookID]; !ok {
+		return store.ErrNotFound
+	}
+	delete(webhooks, webhookID)
+	if len(webhooks) == 0 {
+		delete(s.repoWebhooks, key)
+	}
+	return nil
+}
+
+func (s *Store) RecordRepositoryWebhookDelivery(_ context.Context, params store.RecordRepositoryWebhookDeliveryParams) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for repoKey, webhooks := range s.repoWebhooks {
+		webhook, ok := webhooks[params.WebhookID]
+		if !ok {
+			continue
+		}
+		deliveredAt := params.DeliveredAt
+		webhook.LastDeliveryAt = &deliveredAt
+		webhook.LastDeliveryStatus = params.StatusCode
+		webhook.LastDeliveryError = params.Error
+		if params.Error == "" && params.StatusCode >= 200 && params.StatusCode < 300 {
+			webhook.SuccessCount++
+		} else {
+			webhook.FailureCount++
+		}
+		webhooks[params.WebhookID] = webhook
+		s.repoWebhooks[repoKey] = webhooks
+		return nil
+	}
+	return store.ErrNotFound
+}
+
 func (s *Store) UpdateRepositoryStats(_ context.Context, owner, name string, sizeBytes int64, indexedAt, maintainedAt *time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -430,6 +540,7 @@ func (s *Store) DeleteRepository(_ context.Context, owner, name string) error {
 
 	delete(s.repos, key)
 	delete(s.repoCollaborators, key)
+	delete(s.repoWebhooks, key)
 
 	ownerKey := normalize(owner)
 	keys := s.ownerRepos[ownerKey]

@@ -229,6 +229,81 @@ func TestWithRepositoryLeaseSerializesSameRepository(t *testing.T) {
 	assertNoError(t, <-errs)
 }
 
+func TestRepositoryWebhookRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	testDB := newTestDatabase(t)
+	st := newTestStore(t, testDB)
+
+	if _, err := st.CreateUser(context.Background(), "yash", "hash", "member"); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if _, err := st.CreateRepository(context.Background(), store.CreateRepositoryParams{
+		Owner:         "yash",
+		Name:          "forge",
+		Description:   "Self-hosted git platform",
+		Visibility:    "private",
+		DefaultBranch: "main",
+		RepoPath:      "/data/repos/forge.git",
+	}); err != nil {
+		t.Fatalf("create repository: %v", err)
+	}
+
+	webhook, err := st.CreateRepositoryWebhook(context.Background(), store.CreateRepositoryWebhookParams{
+		Owner:    "yash",
+		RepoName: "forge",
+		URL:      "https://hooks.example.test/forge",
+		Secret:   "top-secret",
+		Events:   []string{store.RepositoryWebhookEventPush, store.RepositoryWebhookEventDeleted},
+	})
+	if err != nil {
+		t.Fatalf("create repository webhook: %v", err)
+	}
+
+	webhooks, err := st.ListRepositoryWebhooks(context.Background(), "yash", "forge")
+	if err != nil {
+		t.Fatalf("list repository webhooks: %v", err)
+	}
+	if len(webhooks) != 1 {
+		t.Fatalf("expected 1 repository webhook, got %+v", webhooks)
+	}
+	if webhooks[0].ID != webhook.ID || webhooks[0].URL != webhook.URL {
+		t.Fatalf("unexpected repository webhook: %+v", webhooks[0])
+	}
+
+	deliveredAt := time.Now().UTC().Round(time.Microsecond)
+	if err := st.RecordRepositoryWebhookDelivery(context.Background(), store.RecordRepositoryWebhookDeliveryParams{
+		WebhookID:   webhook.ID,
+		DeliveredAt: deliveredAt,
+		StatusCode:  204,
+	}); err != nil {
+		t.Fatalf("record repository webhook delivery: %v", err)
+	}
+
+	webhooks, err = st.ListRepositoryWebhooks(context.Background(), "yash", "forge")
+	if err != nil {
+		t.Fatalf("list repository webhooks after delivery: %v", err)
+	}
+	if webhooks[0].LastDeliveryAt == nil || webhooks[0].LastDeliveryStatus != 204 {
+		t.Fatalf("expected delivery status to be recorded, got %+v", webhooks[0])
+	}
+	if webhooks[0].SuccessCount != 1 || webhooks[0].FailureCount != 0 {
+		t.Fatalf("unexpected delivery counters: %+v", webhooks[0])
+	}
+
+	if err := st.DeleteRepositoryWebhook(context.Background(), "yash", "forge", webhook.ID); err != nil {
+		t.Fatalf("delete repository webhook: %v", err)
+	}
+
+	webhooks, err = st.ListRepositoryWebhooks(context.Background(), "yash", "forge")
+	if err != nil {
+		t.Fatalf("list repository webhooks after delete: %v", err)
+	}
+	if len(webhooks) != 0 {
+		t.Fatalf("expected 0 repository webhooks after delete, got %+v", webhooks)
+	}
+}
+
 func TestOrganizationAndCollaboratorRoundTrip(t *testing.T) {
 	t.Parallel()
 

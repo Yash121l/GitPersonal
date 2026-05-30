@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -209,6 +210,32 @@ FROM repo_collaborators rc
 JOIN users u ON u.id = rc.user_id
 WHERE rc.repository_id = $1
   AND rc.user_id = $2`
+
+	createRepositoryWebhookQuery = `
+INSERT INTO repo_webhooks (repository_id, url, secret, events)
+VALUES ($1, $2, $3, $4)
+RETURNING id, repository_id, url, secret, events, created_at, last_delivery_at, last_delivery_status, last_delivery_error, success_count, failure_count`
+
+	listRepositoryWebhooksQuery = `
+SELECT id, repository_id, url, secret, events, created_at, last_delivery_at, last_delivery_status, last_delivery_error, success_count, failure_count
+FROM repo_webhooks
+WHERE repository_id = $1
+ORDER BY created_at ASC, id ASC`
+
+	deleteRepositoryWebhookQuery = `
+DELETE FROM repo_webhooks
+WHERE repository_id = $1
+  AND id = $2`
+
+	recordRepositoryWebhookDeliveryQuery = `
+UPDATE repo_webhooks
+SET
+	last_delivery_at = $2,
+	last_delivery_status = $3,
+	last_delivery_error = $4,
+	success_count = success_count + CASE WHEN $5 THEN 1 ELSE 0 END,
+	failure_count = failure_count + CASE WHEN $5 THEN 0 ELSE 1 END
+WHERE id = $1`
 
 	organizationSlugExistsQuery = `
 SELECT EXISTS (
@@ -653,6 +680,104 @@ func (s *Store) GetRepositoryCollaborator(ctx context.Context, owner, repoName s
 	return collaborator, nil
 }
 
+func (s *Store) CreateRepositoryWebhook(ctx context.Context, params store.CreateRepositoryWebhookParams) (store.RepositoryWebhook, error) {
+	repository, err := s.GetRepositoryByOwnerAndName(ctx, params.Owner, params.RepoName)
+	if err != nil {
+		return store.RepositoryWebhook{}, err
+	}
+
+	events, err := store.NormalizeRepositoryWebhookEvents(params.Events)
+	if err != nil {
+		return store.RepositoryWebhook{}, err
+	}
+
+	webhook, err := scanRepositoryWebhook(s.db.QueryRowContext(
+		ctx,
+		createRepositoryWebhookQuery,
+		repository.ID,
+		params.URL,
+		params.Secret,
+		serializeWebhookEvents(events),
+	))
+	if err != nil {
+		if isUniqueViolation(err) {
+			return store.RepositoryWebhook{}, store.ErrAlreadyExists
+		}
+		return store.RepositoryWebhook{}, err
+	}
+	webhook.Events = append([]string(nil), events...)
+	return webhook, nil
+}
+
+func (s *Store) ListRepositoryWebhooks(ctx context.Context, owner, repoName string) ([]store.RepositoryWebhook, error) {
+	repository, err := s.GetRepositoryByOwnerAndName(ctx, owner, repoName)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.db.QueryContext(ctx, listRepositoryWebhooksQuery, repository.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var webhooks []store.RepositoryWebhook
+	for rows.Next() {
+		webhook, err := scanRepositoryWebhook(rows)
+		if err != nil {
+			return nil, err
+		}
+		webhooks = append(webhooks, webhook)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return webhooks, nil
+}
+
+func (s *Store) DeleteRepositoryWebhook(ctx context.Context, owner, repoName string, webhookID int64) error {
+	repository, err := s.GetRepositoryByOwnerAndName(ctx, owner, repoName)
+	if err != nil {
+		return err
+	}
+
+	result, err := s.db.ExecContext(ctx, deleteRepositoryWebhookQuery, repository.ID, webhookID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) RecordRepositoryWebhookDelivery(ctx context.Context, params store.RecordRepositoryWebhookDeliveryParams) error {
+	result, err := s.db.ExecContext(
+		ctx,
+		recordRepositoryWebhookDeliveryQuery,
+		params.WebhookID,
+		params.DeliveredAt,
+		params.StatusCode,
+		params.Error,
+		repositoryWebhookSucceeded(params),
+	)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) UpdateRepositoryStats(ctx context.Context, owner, name string, sizeBytes int64, indexedAt, maintainedAt *time.Time) error {
 	repository, err := s.GetRepositoryByOwnerAndName(ctx, owner, name)
 	if err != nil {
@@ -924,6 +1049,56 @@ func normalizeRepositoryRole(value string) (string, error) {
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+func scanRepositoryWebhook(scanner interface {
+	Scan(dest ...any) error
+}) (store.RepositoryWebhook, error) {
+	var (
+		webhook    store.RepositoryWebhook
+		rawEvents  string
+		statusCode sql.NullInt64
+	)
+	if err := scanner.Scan(
+		&webhook.ID,
+		&webhook.RepositoryID,
+		&webhook.URL,
+		&webhook.Secret,
+		&rawEvents,
+		&webhook.CreatedAt,
+		&webhook.LastDeliveryAt,
+		&statusCode,
+		&webhook.LastDeliveryError,
+		&webhook.SuccessCount,
+		&webhook.FailureCount,
+	); err != nil {
+		return store.RepositoryWebhook{}, err
+	}
+	if statusCode.Valid {
+		webhook.LastDeliveryStatus = int(statusCode.Int64)
+	}
+
+	events, err := parseWebhookEvents(rawEvents)
+	if err != nil {
+		return store.RepositoryWebhook{}, err
+	}
+	webhook.Events = events
+	return webhook, nil
+}
+
+func serializeWebhookEvents(events []string) string {
+	return strings.Join(events, ",")
+}
+
+func parseWebhookEvents(raw string) ([]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return store.NormalizeRepositoryWebhookEvents(nil)
+	}
+	return store.NormalizeRepositoryWebhookEvents(strings.Split(raw, ","))
+}
+
+func repositoryWebhookSucceeded(params store.RecordRepositoryWebhookDeliveryParams) bool {
+	return params.Error == "" && params.StatusCode >= 200 && params.StatusCode < 300
 }
 
 func scanRepositories(rows *sql.Rows) ([]store.Repository, error) {

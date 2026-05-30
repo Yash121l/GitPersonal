@@ -28,6 +28,9 @@ const (
 	RepositoryRoleRead  = "read"
 	RepositoryRoleWrite = "write"
 	RepositoryRoleAdmin = "admin"
+
+	RepositoryWebhookEventPush    = "repository.push"
+	RepositoryWebhookEventDeleted = "repository.deleted"
 )
 
 type User struct {
@@ -80,6 +83,20 @@ type RepositoryCollaborator struct {
 	Username     string    `json:"username"`
 	Role         string    `json:"role"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+type RepositoryWebhook struct {
+	ID                 int64      `json:"id"`
+	RepositoryID       int64      `json:"repository_id"`
+	URL                string     `json:"url"`
+	Secret             string     `json:"-"`
+	Events             []string   `json:"events"`
+	CreatedAt          time.Time  `json:"created_at"`
+	LastDeliveryAt     *time.Time `json:"last_delivery_at,omitempty"`
+	LastDeliveryStatus int        `json:"last_delivery_status,omitempty"`
+	LastDeliveryError  string     `json:"last_delivery_error,omitempty"`
+	SuccessCount       int64      `json:"success_count"`
+	FailureCount       int64      `json:"failure_count"`
 }
 
 type CreateRepositoryParams struct {
@@ -144,6 +161,21 @@ type AddRepositoryCollaboratorParams struct {
 	Role     string
 }
 
+type CreateRepositoryWebhookParams struct {
+	Owner    string
+	RepoName string
+	URL      string
+	Secret   string
+	Events   []string
+}
+
+type RecordRepositoryWebhookDeliveryParams struct {
+	WebhookID   int64
+	DeliveredAt time.Time
+	StatusCode  int
+	Error       string
+}
+
 type Store interface {
 	CreateUser(ctx context.Context, username, passwordHash, role string) (User, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
@@ -160,6 +192,10 @@ type Store interface {
 	ListRepositoriesForUser(ctx context.Context, userID int64) ([]Repository, error)
 	AddRepositoryCollaborator(ctx context.Context, params AddRepositoryCollaboratorParams) (RepositoryCollaborator, error)
 	GetRepositoryCollaborator(ctx context.Context, owner, repoName string, userID int64) (RepositoryCollaborator, error)
+	CreateRepositoryWebhook(ctx context.Context, params CreateRepositoryWebhookParams) (RepositoryWebhook, error)
+	ListRepositoryWebhooks(ctx context.Context, owner, repoName string) ([]RepositoryWebhook, error)
+	DeleteRepositoryWebhook(ctx context.Context, owner, repoName string, webhookID int64) error
+	RecordRepositoryWebhookDelivery(ctx context.Context, params RecordRepositoryWebhookDeliveryParams) error
 	UpdateRepositoryStats(ctx context.Context, owner, name string, sizeBytes int64, indexedAt, maintainedAt *time.Time) error
 	DeleteRepository(ctx context.Context, owner, name string) error
 	CreateSession(ctx context.Context, params CreateSessionParams) (Session, error)
@@ -183,4 +219,47 @@ func RepositoryLeaseKey(owner, name string) int64 {
 
 func NormalizeIdentity(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func RepositoryWebhookEvents() []string {
+	return []string{
+		RepositoryWebhookEventPush,
+		RepositoryWebhookEventDeleted,
+	}
+}
+
+func NormalizeRepositoryWebhookEvents(events []string) ([]string, error) {
+	if len(events) == 0 {
+		return RepositoryWebhookEvents(), nil
+	}
+
+	allowed := map[string]struct{}{
+		RepositoryWebhookEventPush:    {},
+		RepositoryWebhookEventDeleted: {},
+	}
+
+	seen := make(map[string]struct{}, len(events))
+	normalized := make([]string, 0, len(events))
+	for _, event := range events {
+		value := strings.ToLower(strings.TrimSpace(event))
+		if _, ok := allowed[value]; !ok {
+			return nil, ErrInvalidArgument
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+
+	ordered := make([]string, 0, len(normalized))
+	for _, candidate := range RepositoryWebhookEvents() {
+		if _, ok := seen[candidate]; ok {
+			ordered = append(ordered, candidate)
+		}
+	}
+	if len(ordered) == 0 {
+		return nil, ErrInvalidArgument
+	}
+	return ordered, nil
 }

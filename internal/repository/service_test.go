@@ -2,8 +2,14 @@ package repository
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -56,7 +62,7 @@ func TestCreateAndDeleteRepositoryProvisioning(t *testing.T) {
 		t.Fatalf("unexpected HEAD contents: %q", string(headContents))
 	}
 
-	if err := service.DeleteRepository(context.Background(), "yash", "forge"); err != nil {
+	if err := service.DeleteRepository(context.Background(), "yash", "forge", nil); err != nil {
 		t.Fatalf("delete repository: %v", err)
 	}
 	if _, err := os.Stat(repository.RepoPath); !os.IsNotExist(err) {
@@ -268,6 +274,101 @@ func TestPermissionsCoverOrganizationsAndCollaborators(t *testing.T) {
 	}
 }
 
+func TestDeleteRepositoryEmitsWebhook(t *testing.T) {
+	t.Parallel()
+
+	reposRoot := t.TempDir()
+	st := memory.NewStore()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	service, err := NewService(logger, st, reposRoot)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	service.Start(t.Context())
+
+	user, err := st.CreateUser(context.Background(), "yash", "hash", "member")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if _, err := service.CreateRepository(context.Background(), store.CreateRepositoryParams{
+		Owner:         "yash",
+		Name:          "forge",
+		Description:   "Self-hosted git platform",
+		Visibility:    "private",
+		DefaultBranch: "main",
+	}); err != nil {
+		t.Fatalf("create repository: %v", err)
+	}
+
+	deliveries := make(chan struct {
+		Header http.Header
+		Body   []byte
+	}, 1)
+	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		deliveries <- struct {
+			Header http.Header
+			Body   []byte
+		}{
+			Header: r.Header.Clone(),
+			Body:   body,
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer receiver.Close()
+
+	if _, err := st.CreateRepositoryWebhook(context.Background(), store.CreateRepositoryWebhookParams{
+		Owner:    "yash",
+		RepoName: "forge",
+		URL:      receiver.URL,
+		Secret:   "webhook-secret",
+		Events:   []string{store.RepositoryWebhookEventDeleted},
+	}); err != nil {
+		t.Fatalf("create repository webhook: %v", err)
+	}
+
+	if err := service.DeleteRepository(context.Background(), "yash", "forge", &user); err != nil {
+		t.Fatalf("delete repository: %v", err)
+	}
+
+	select {
+	case delivery := <-deliveries:
+		if got := delivery.Header.Get("X-Forge-Event"); got != store.RepositoryWebhookEventDeleted {
+			t.Fatalf("unexpected webhook event header: %s", got)
+		}
+
+		signature := delivery.Header.Get("X-Forge-Signature-256")
+		expectedSignature := "sha256=" + signTestWebhookPayload("webhook-secret", delivery.Body)
+		if signature != expectedSignature {
+			t.Fatalf("unexpected webhook signature: got %s want %s", signature, expectedSignature)
+		}
+
+		var payload struct {
+			Event      string `json:"event"`
+			Repository struct {
+				Name string `json:"name"`
+			} `json:"repository"`
+			Actor struct {
+				Username string `json:"username"`
+			} `json:"actor"`
+		}
+		if err := json.Unmarshal(delivery.Body, &payload); err != nil {
+			t.Fatalf("decode webhook payload: %v", err)
+		}
+		if payload.Event != store.RepositoryWebhookEventDeleted {
+			t.Fatalf("unexpected payload event: %s", payload.Event)
+		}
+		if payload.Repository.Name != "forge" {
+			t.Fatalf("unexpected payload repository: %+v", payload.Repository)
+		}
+		if payload.Actor.Username != "yash" {
+			t.Fatalf("unexpected payload actor: %+v", payload.Actor)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for delete webhook delivery")
+	}
+}
+
 func runGit(t *testing.T, workdir string, args ...string) {
 	t.Helper()
 
@@ -277,4 +378,10 @@ func runGit(t *testing.T, workdir string, args ...string) {
 	if err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, string(output))
 	}
+}
+
+func signTestWebhookPayload(secret string, payload []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(payload)
+	return hex.EncodeToString(mac.Sum(nil))
 }

@@ -72,6 +72,7 @@ func (s *Server) handleGitHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if writeAccess && strings.HasSuffix(suffix, "/git-receive-pack") {
 		s.repositories.ScheduleMaintenance(repository)
+		s.repositories.EmitRepositoryEvent(r.Context(), repository, store.RepositoryWebhookEventPush, currentUser)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 
 	"github.com/yashlunawat/forge/internal/config"
 	"github.com/yashlunawat/forge/internal/repository"
+	"github.com/yashlunawat/forge/internal/store"
 	"github.com/yashlunawat/forge/internal/store/memory"
 )
 
@@ -287,6 +289,97 @@ func TestOrganizationAndCollaboratorLifecycle(t *testing.T) {
 	deleteOrgAsBob := performJSONRequest(t, app.Router(), http.MethodDelete, "/api/v1/repos/team/infra", nil, bobCookie)
 	if deleteOrgAsBob.Code != http.StatusForbidden {
 		t.Fatalf("expected org maintainer delete to be forbidden, got %d with body %s", deleteOrgAsBob.Code, deleteOrgAsBob.Body.String())
+	}
+}
+
+func TestRepositoryWebhookLifecycle(t *testing.T) {
+	t.Parallel()
+
+	app, _ := newTestServer(t)
+
+	aliceRegister := performJSONRequest(t, app.Router(), http.MethodPost, "/api/v1/auth/register", map[string]string{
+		"username": "alice",
+		"password": "correct horse battery staple",
+	}, nil)
+	if aliceRegister.Code != http.StatusCreated {
+		t.Fatalf("alice register status = %d, body = %s", aliceRegister.Code, aliceRegister.Body.String())
+	}
+	aliceCookie := firstCookie(t, aliceRegister.Result().Cookies(), "forge_session")
+
+	bobRegister := performJSONRequest(t, app.Router(), http.MethodPost, "/api/v1/auth/register", map[string]string{
+		"username": "bob",
+		"password": "correct horse battery staple",
+	}, nil)
+	if bobRegister.Code != http.StatusCreated {
+		t.Fatalf("bob register status = %d, body = %s", bobRegister.Code, bobRegister.Body.String())
+	}
+	bobCookie := firstCookie(t, bobRegister.Result().Cookies(), "forge_session")
+
+	createRepo := performJSONRequest(t, app.Router(), http.MethodPost, "/api/v1/repos", map[string]string{
+		"name":           "forge",
+		"description":    "Self-hosted git platform",
+		"visibility":     "private",
+		"default_branch": "main",
+	}, aliceCookie)
+	if createRepo.Code != http.StatusCreated {
+		t.Fatalf("create repo status = %d, body = %s", createRepo.Code, createRepo.Body.String())
+	}
+
+	createWebhook := performJSONRequest(t, app.Router(), http.MethodPost, "/api/v1/repos/alice/forge/webhooks", map[string]any{
+		"url":    "https://hooks.example.test/forge",
+		"secret": "super-secret",
+		"events": []string{store.RepositoryWebhookEventPush},
+	}, aliceCookie)
+	if createWebhook.Code != http.StatusCreated {
+		t.Fatalf("create webhook status = %d, body = %s", createWebhook.Code, createWebhook.Body.String())
+	}
+
+	bobList := performJSONRequest(t, app.Router(), http.MethodGet, "/api/v1/repos/alice/forge/webhooks", nil, bobCookie)
+	if bobList.Code != http.StatusForbidden {
+		t.Fatalf("expected bob webhook list to be forbidden, got %d with body %s", bobList.Code, bobList.Body.String())
+	}
+
+	listWebhooks := performJSONRequest(t, app.Router(), http.MethodGet, "/api/v1/repos/alice/forge/webhooks", nil, aliceCookie)
+	if listWebhooks.Code != http.StatusOK {
+		t.Fatalf("list webhooks status = %d, body = %s", listWebhooks.Code, listWebhooks.Body.String())
+	}
+
+	var listBody struct {
+		Webhooks []struct {
+			ID      int64    `json:"id"`
+			URL     string   `json:"url"`
+			Events  []string `json:"events"`
+			Success int64    `json:"success_count"`
+			Failure int64    `json:"failure_count"`
+		} `json:"webhooks"`
+	}
+	if err := json.Unmarshal(listWebhooks.Body.Bytes(), &listBody); err != nil {
+		t.Fatalf("decode webhook list: %v", err)
+	}
+	if len(listBody.Webhooks) != 1 {
+		t.Fatalf("expected 1 webhook, got %+v", listBody.Webhooks)
+	}
+	if listBody.Webhooks[0].URL != "https://hooks.example.test/forge" {
+		t.Fatalf("unexpected webhook url: %+v", listBody.Webhooks[0])
+	}
+	if len(listBody.Webhooks[0].Events) != 1 || listBody.Webhooks[0].Events[0] != store.RepositoryWebhookEventPush {
+		t.Fatalf("unexpected webhook events: %+v", listBody.Webhooks[0].Events)
+	}
+
+	deleteWebhook := performJSONRequest(t, app.Router(), http.MethodDelete, "/api/v1/repos/alice/forge/webhooks/"+strconv.FormatInt(listBody.Webhooks[0].ID, 10), nil, aliceCookie)
+	if deleteWebhook.Code != http.StatusNoContent {
+		t.Fatalf("delete webhook status = %d, body = %s", deleteWebhook.Code, deleteWebhook.Body.String())
+	}
+
+	listAfterDelete := performJSONRequest(t, app.Router(), http.MethodGet, "/api/v1/repos/alice/forge/webhooks", nil, aliceCookie)
+	if listAfterDelete.Code != http.StatusOK {
+		t.Fatalf("list webhooks after delete status = %d, body = %s", listAfterDelete.Code, listAfterDelete.Body.String())
+	}
+	if err := json.Unmarshal(listAfterDelete.Body.Bytes(), &listBody); err != nil {
+		t.Fatalf("decode webhook list after delete: %v", err)
+	}
+	if len(listBody.Webhooks) != 0 {
+		t.Fatalf("expected 0 webhooks after delete, got %+v", listBody.Webhooks)
 	}
 }
 

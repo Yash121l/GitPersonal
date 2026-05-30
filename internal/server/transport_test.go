@@ -2,9 +2,13 @@ package server
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"io"
 	"log/slog"
@@ -94,6 +98,112 @@ func TestGitSmartHTTPPushAndLsRemote(t *testing.T) {
 	output := runGit(t, "", []string{"GIT_TERMINAL_PROMPT=0"}, "ls-remote", remote)
 	if !strings.Contains(output, "refs/heads/main") {
 		t.Fatalf("expected ls-remote to include main branch, output = %s", output)
+	}
+}
+
+func TestGitSmartHTTPPushEmitsWebhook(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	app, repositories := newTestServer(t)
+	passwordHash, err := auth.HashPassword("supersecretpass")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	user, err := app.store.CreateUser(context.Background(), "yash", passwordHash, "member")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if _, err := repositories.CreateRepository(context.Background(), store.CreateRepositoryParams{
+		Owner:         "yash",
+		Name:          "forge",
+		Visibility:    "private",
+		DefaultBranch: "main",
+	}); err != nil {
+		t.Fatalf("create repository: %v", err)
+	}
+
+	deliveries := make(chan struct {
+		Header http.Header
+		Body   []byte
+	}, 1)
+	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		deliveries <- struct {
+			Header http.Header
+			Body   []byte
+		}{
+			Header: r.Header.Clone(),
+			Body:   body,
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer receiver.Close()
+
+	if _, err := app.store.CreateRepositoryWebhook(context.Background(), store.CreateRepositoryWebhookParams{
+		Owner:    "yash",
+		RepoName: "forge",
+		URL:      receiver.URL,
+		Secret:   "hook-secret",
+		Events:   []string{store.RepositoryWebhookEventPush},
+	}); err != nil {
+		t.Fatalf("create repository webhook: %v", err)
+	}
+
+	server := httptest.NewServer(app.Router())
+	defer server.Close()
+
+	worktree := t.TempDir()
+	runGit(t, worktree, nil, "init")
+	runGit(t, worktree, nil, "config", "user.email", "yash@example.com")
+	runGit(t, worktree, nil, "config", "user.name", "Yash")
+	if err := os.WriteFile(filepath.Join(worktree, "README.md"), []byte("forge\n"), 0o644); err != nil {
+		t.Fatalf("write readme: %v", err)
+	}
+	runGit(t, worktree, nil, "add", "README.md")
+	runGit(t, worktree, nil, "commit", "-m", "initial")
+
+	remote := strings.Replace(server.URL, "http://", "http://yash:supersecretpass@", 1) + "/git/yash/forge.git"
+	runGit(t, worktree, []string{"GIT_TERMINAL_PROMPT=0"}, "remote", "add", "origin", remote)
+	runGit(t, worktree, []string{"GIT_TERMINAL_PROMPT=0"}, "push", "origin", "HEAD:refs/heads/main")
+
+	select {
+	case delivery := <-deliveries:
+		if got := delivery.Header.Get("X-Forge-Event"); got != store.RepositoryWebhookEventPush {
+			t.Fatalf("unexpected webhook event header: %s", got)
+		}
+		expectedSignature := "sha256=" + signTransportTestWebhookPayload("hook-secret", delivery.Body)
+		if got := delivery.Header.Get("X-Forge-Signature-256"); got != expectedSignature {
+			t.Fatalf("unexpected webhook signature: got %s want %s", got, expectedSignature)
+		}
+
+		var payload struct {
+			Event      string `json:"event"`
+			Repository struct {
+				Name string `json:"name"`
+			} `json:"repository"`
+			Actor struct {
+				ID       int64  `json:"id"`
+				Username string `json:"username"`
+			} `json:"actor"`
+		}
+		if err := json.Unmarshal(delivery.Body, &payload); err != nil {
+			t.Fatalf("decode webhook payload: %v", err)
+		}
+		if payload.Event != store.RepositoryWebhookEventPush {
+			t.Fatalf("unexpected webhook payload event: %s", payload.Event)
+		}
+		if payload.Repository.Name != "forge" {
+			t.Fatalf("unexpected webhook repository payload: %+v", payload.Repository)
+		}
+		if payload.Actor.ID != user.ID || payload.Actor.Username != "yash" {
+			t.Fatalf("unexpected webhook actor payload: %+v", payload.Actor)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for push webhook delivery")
 	}
 }
 
@@ -408,4 +518,10 @@ func seedRepository(t *testing.T, repoPath string) {
 	runGit(t, worktree, nil, "add", "README.md")
 	runGit(t, worktree, nil, "commit", "-m", "seed")
 	runGit(t, worktree, nil, "push", repoPath, "HEAD:refs/heads/main")
+}
+
+func signTransportTestWebhookPayload(secret string, payload []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(payload)
+	return hex.EncodeToString(mac.Sum(nil))
 }

@@ -470,8 +470,36 @@
   };
 
   const renderRepository = async () => {
-    const detail = await requestJSON(`/api/v1/repos/${encodeURIComponent(repoOwner)}/${encodeURIComponent(repoName)}`);
+    const [detail, webhookPayload] = await Promise.all([
+      requestJSON(`/api/v1/repos/${encodeURIComponent(repoOwner)}/${encodeURIComponent(repoName)}`),
+      requestJSON(`/api/v1/repos/${encodeURIComponent(repoOwner)}/${encodeURIComponent(repoName)}/webhooks`).catch((error) => {
+        if (error.status === 403) {
+          return null;
+        }
+        throw error;
+      }),
+    ]);
     const repository = detail.repository;
+    const webhooks = webhookPayload?.webhooks ?? null;
+    const webhookCards =
+      webhooks && webhooks.length
+        ? webhooks
+            .map(
+              (webhook) => `
+                <article class="repo-card">
+                  <div class="button-row">
+                    <span class="pill">${escapeHTML(webhook.events.join(", "))}</span>
+                    <span class="pill">${escapeHTML(webhook.url)}</span>
+                  </div>
+                  <p class="muted">Successes: ${escapeHTML(webhook.success_count)} | Failures: ${escapeHTML(webhook.failure_count)}</p>
+                  <p class="muted">Last delivery: ${escapeHTML(formatDate(webhook.last_delivery_at))}</p>
+                  <p class="muted">${escapeHTML(webhook.last_delivery_error || "Last delivery recorded without error.")}</p>
+                  <button class="button secondary" type="button" data-action="delete-webhook" data-webhook-id="${escapeHTML(webhook.id)}">Delete Webhook</button>
+                </article>
+              `
+            )
+            .join("")
+        : `<div class="empty-state">No repository webhooks registered yet.</div>`;
 
     app.innerHTML = `
       <section class="hero-panel">
@@ -525,6 +553,28 @@
           <button class="button secondary" type="submit">Add Collaborator</button>
         </form>
       </section>
+      <section class="panel">
+        <h2>Repository Webhooks</h2>
+        ${
+          webhooks === null
+            ? `<p class="muted">Webhook management requires repository admin access.</p>`
+            : `
+              <form class="form-stack" data-form="add-webhook">
+                <label class="field"><span>Delivery URL</span><input name="url" type="url" placeholder="https://example.com/hooks/forge" required></label>
+                <label class="field"><span>Secret</span><input name="secret" placeholder="Optional signing secret"></label>
+                <label class="field">
+                  <span>Events</span>
+                  <select name="event">
+                    <option value="repository.push">repository.push</option>
+                    <option value="repository.deleted">repository.deleted</option>
+                  </select>
+                </label>
+                <button class="button" type="submit">Create Webhook</button>
+              </form>
+              <div class="stack">${webhookCards}</div>
+            `
+        }
+      </section>
     `;
 
     app.querySelector('[data-form="add-collaborator"]').addEventListener("submit", async (event) => {
@@ -543,6 +593,40 @@
       } catch (error) {
         showFlash(error.message);
       }
+    });
+
+    const addWebhookForm = app.querySelector('[data-form="add-webhook"]');
+    if (addWebhookForm) {
+      addWebhookForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        try {
+          await requestJSON(`/api/v1/repos/${encodeURIComponent(repoOwner)}/${encodeURIComponent(repoName)}/webhooks`, {
+            method: "POST",
+            body: JSON.stringify({
+              url: form.get("url"),
+              secret: form.get("secret"),
+              events: [form.get("event")],
+            }),
+          });
+          window.location.reload();
+        } catch (error) {
+          showFlash(error.message);
+        }
+      });
+    }
+
+    app.querySelectorAll('[data-action="delete-webhook"]').forEach((button) => {
+      button.addEventListener("click", async () => {
+        try {
+          await requestJSON(`/api/v1/repos/${encodeURIComponent(repoOwner)}/${encodeURIComponent(repoName)}/webhooks/${encodeURIComponent(button.dataset.webhookId)}`, {
+            method: "DELETE",
+          });
+          window.location.reload();
+        } catch (error) {
+          showFlash(error.message);
+        }
+      });
     });
   };
 
