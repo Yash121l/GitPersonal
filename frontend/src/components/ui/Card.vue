@@ -12,7 +12,7 @@ interface Props {
 const props = defineProps<Props>()
 const classes = computed(() =>
   cn(
-    'rounded-2xl border border-zinc-800/90 bg-zinc-950/80 p-6 text-zinc-100 shadow-[0_20px_60px_rgba(0,0,0,0.42)] backdrop-blur-xl',
+    'rounded-xl border border-zinc-800/90 bg-zinc-950/88 p-4 text-zinc-100 shadow-[0_14px_40px_rgba(0,0,0,0.36)] backdrop-blur-xl',
     props.class,
   ),
 )

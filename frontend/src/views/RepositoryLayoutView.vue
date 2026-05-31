@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, watchEffect } from 'vue'
-import { RouterLink, RouterView, useRoute } from 'vue-router'
+import { RouterView, useRoute } from 'vue-router'
 
 import { getRepositoryNavigation, isNavigationItemActive } from '@/app/navigation'
 import EmptyState from '@/components/empty/EmptyState.vue'
+import ViewState from '@/components/state/ViewState.vue'
 import Badge from '@/components/ui/Badge.vue'
 import Button from '@/components/ui/Button.vue'
 import Card from '@/components/ui/Card.vue'
+import Skeleton from '@/components/ui/Skeleton.vue'
 import { provideRepositoryWorkspace } from '@/composables/useRepositoryWorkspace'
 import { formatBytes } from '@/lib/utils'
 
@@ -17,6 +19,9 @@ const { owner, repo, currentBranch } = workspace
 const repositoryNavigation = computed(() => getRepositoryNavigation())
 const currentSection = computed(
   () => repositoryNavigation.value.find((item) => isNavigationItemActive(item, route)) ?? repositoryNavigation.value[0] ?? null,
+)
+const repositoryLoading = computed(
+  () => workspace.repositoryQuery.isLoading.value && !workspace.repositoryQuery.data.value,
 )
 
 watchEffect(() => {
@@ -43,8 +48,30 @@ watchEffect(() => {
     />
   </div>
 
-  <div v-else class="space-y-6">
-    <Card class="space-y-5">
+  <ViewState v-else :loading="repositoryLoading" :empty="false" wrapper-class="section-stack">
+    <template #loading>
+      <Card class="space-y-4">
+        <div class="flex flex-wrap gap-2">
+          <Skeleton class="h-6 w-20" />
+          <Skeleton class="h-6 w-20" />
+          <Skeleton class="h-6 w-20" />
+        </div>
+        <div class="grid gap-3 xl:grid-cols-[1.35fr_0.65fr]">
+          <div class="space-y-3">
+            <Skeleton class="h-8 w-72" />
+            <Skeleton class="h-4 w-full max-w-3xl" />
+            <Skeleton class="h-4 w-2/3 max-w-2xl" />
+          </div>
+          <div class="grid gap-3 md:grid-cols-3 xl:grid-cols-1">
+            <Skeleton class="h-20" />
+            <Skeleton class="h-20" />
+            <Skeleton class="h-20" />
+          </div>
+        </div>
+      </Card>
+    </template>
+
+    <Card class="space-y-4">
       <div class="flex flex-wrap items-center gap-2">
         <Badge v-if="workspace.repositoryQuery.data.value">{{ workspace.repositoryQuery.data.value.repository.owner_type }}</Badge>
         <Badge v-if="workspace.repositoryQuery.data.value" variant="accent">
@@ -55,29 +82,38 @@ watchEffect(() => {
         </Badge>
       </div>
 
-      <div class="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">
+      <div class="grid gap-3 xl:grid-cols-[1.35fr_0.65fr]">
         <div>
-          <h2 class="font-mono text-3xl font-semibold tracking-tight text-zinc-50">
-            {{ owner }}/{{ repo }}
-          </h2>
-          <p class="mt-3 max-w-3xl text-sm leading-7 text-zinc-400">
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 class="font-mono text-xl font-semibold tracking-tight text-zinc-50 md:text-2xl">
+              {{ owner }}/{{ repo }}
+            </h2>
+            <span class="rounded-md border border-zinc-800 bg-black/30 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+              {{ currentSection?.label || 'Repository' }}
+            </span>
+          </div>
+          <p class="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
             {{
               workspace.repositoryQuery.data.value?.repository.description ||
               'No description has been added for this repository yet.'
             }}
           </p>
+          <div class="meta-list mt-3">
+            <span>{{ repositoryNavigation.length }} enabled modules</span>
+            <span>Branch context: {{ currentBranch }}</span>
+          </div>
         </div>
 
         <div class="grid gap-3 md:grid-cols-3 xl:grid-cols-1">
-          <div class="rounded-xl border border-zinc-800 bg-black/30 p-4">
+          <div class="rounded-lg border border-zinc-800 bg-black/30 p-3">
             <p class="eyebrow">Default Branch</p>
             <p class="mt-2 font-mono text-sm text-zinc-200">{{ currentBranch }}</p>
           </div>
-          <div class="rounded-xl border border-zinc-800 bg-black/30 p-4">
+          <div class="rounded-lg border border-zinc-800 bg-black/30 p-3">
             <p class="eyebrow">Branch Count</p>
-            <p class="mt-2 text-2xl font-semibold text-zinc-50">{{ workspace.branchesQuery.data.value?.length ?? 0 }}</p>
+            <p class="mt-2 text-xl font-semibold text-zinc-50">{{ workspace.branchesQuery.data.value?.length ?? 0 }}</p>
           </div>
-          <div class="rounded-xl border border-zinc-800 bg-black/30 p-4">
+          <div class="rounded-lg border border-zinc-800 bg-black/30 p-3">
             <p class="eyebrow">Repository Size</p>
             <p class="mt-2 text-sm font-semibold text-zinc-100">
               {{ formatBytes(workspace.repositoryQuery.data.value?.repository.size_bytes) }}
@@ -86,28 +122,10 @@ watchEffect(() => {
         </div>
       </div>
 
-      <div class="grid gap-4 xl:grid-cols-[1fr_auto] xl:items-center">
-        <nav class="overflow-x-auto">
-          <div class="flex min-w-max gap-2">
-            <RouterLink
-              v-for="item in repositoryNavigation"
-              :key="item.id"
-              :to="item.to({ owner: workspace.owner.value, repo: workspace.repo.value, currentQuery: route.query })"
-              :class="
-                [
-                  'inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition',
-                  isNavigationItemActive(item, route)
-                    ? 'border-zinc-700 bg-zinc-100 text-zinc-950'
-                    : 'border-zinc-800 bg-black/20 text-zinc-400 hover:border-zinc-700 hover:bg-zinc-900 hover:text-zinc-100',
-                ]
-              "
-            >
-              <component :is="item.icon" class="size-4" />
-              {{ item.label }}
-            </RouterLink>
-          </div>
-        </nav>
-
+      <div class="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-800/80 pt-3">
+        <p class="text-sm text-zinc-400">
+          Repository modules live in the left sidebar so code, access, automation, activity, and settings stay in one consistent map.
+        </p>
         <Button
           v-if="workspace.repositoryQuery.data.value"
           :as="'a'"
@@ -122,5 +140,5 @@ watchEffect(() => {
     </Card>
 
     <RouterView />
-  </div>
+  </ViewState>
 </template>

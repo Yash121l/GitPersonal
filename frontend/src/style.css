@@ -98,12 +98,12 @@
   body {
     @apply min-h-screen bg-[#09090b] text-zinc-100 antialiased;
     background-image:
-      radial-gradient(circle at top left, rgba(56, 189, 248, 0.10), transparent 18rem),
-      radial-gradient(circle at top right, rgba(99, 102, 241, 0.10), transparent 16rem),
-      linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+      radial-gradient(circle at top left, rgba(56, 189, 248, 0.08), transparent 15rem),
+      radial-gradient(circle at top right, rgba(99, 102, 241, 0.08), transparent 13rem),
+      linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px),
       linear-gradient(180deg, #09090b 0%, #0f1117 100%);
-    background-size: auto, auto, 2rem 2rem, 2rem 2rem, auto;
+    background-size: auto, auto, 1.5rem 1.5rem, 1.5rem 1.5rem, auto;
     background-position: 0 0, 100% 0, 0 0, 0 0, 0 0;
     font-family: "Geist Sans", "IBM Plex Sans", "Inter", "Segoe UI", sans-serif;
   }
@@ -128,23 +128,39 @@
 
 @layer components {
   .page-shell {
-    @apply mx-auto w-full max-w-[1680px] px-4 py-5 md:px-6 lg:px-8;
+    @apply mx-auto w-full max-w-[1540px] px-3 py-3 md:px-4 lg:px-5;
   }
 
   .frosted-panel {
-    @apply rounded-2xl border border-zinc-800/90 bg-zinc-950/80 shadow-[0_20px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl;
+    @apply rounded-xl border border-zinc-800/90 bg-zinc-950/88 shadow-[0_14px_40px_rgba(0,0,0,0.38)] backdrop-blur-xl;
   }
 
   .eyebrow {
-    @apply text-[11px] font-semibold uppercase tracking-[0.26em] text-zinc-500;
+    @apply text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-500;
   }
 
   .field-label {
-    @apply mb-2 block text-sm font-medium text-zinc-300;
+    @apply mb-1.5 block text-xs font-medium uppercase tracking-[0.14em] text-zinc-400;
   }
 
   .terminal-panel {
-    @apply rounded-2xl border border-zinc-800 bg-black/60 shadow-[0_16px_48px_rgba(0,0,0,0.45)];
+    @apply rounded-xl border border-zinc-800 bg-black/60 shadow-[0_12px_36px_rgba(0,0,0,0.4)];
+  }
+
+  .panel-header {
+    @apply flex items-center justify-between gap-3 border-b border-zinc-800/80 pb-3;
+  }
+
+  .section-stack {
+    @apply space-y-4;
+  }
+
+  .dense-copy {
+    @apply text-sm leading-6 text-zinc-400;
+  }
+
+  .meta-list {
+    @apply flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500;
   }
 }
 

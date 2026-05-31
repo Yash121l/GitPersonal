@@ -1,0 +1,1 @@
+import{J as e,Q as t,Tt as n,W as r,rt as i}from"./index-C-jqossp.js";import{r as a}from"./Card-C7AeT0Fq.js";var o=t({name:`UiSkeleton`,__name:`Skeleton`,props:{class:{}},setup(t){let o=t,s=r(()=>a(`animate-pulse rounded-lg bg-zinc-900`,o.class));return(t,r)=>(i(),e(`div`,{class:n(s.value)},null,2))}});export{o as t};

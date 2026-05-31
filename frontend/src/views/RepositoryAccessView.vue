@@ -47,50 +47,52 @@ async function handleAddCollaborator() {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="section-stack">
     <PageHeader
       eyebrow="Access"
-      title="Transport endpoints and permissions stay in one place."
-      description="Repository access is separated from browsing so clone URLs, visibility, and collaborator changes stay discoverable as the product grows."
+      title="Access"
+      description="Clone endpoints, visibility, and collaborator changes for this repository."
     >
       <template #actions>
         <Badge>{{ workspace.repositoryQuery.data.value?.repository.visibility }}</Badge>
       </template>
     </PageHeader>
 
-    <div class="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+    <div class="grid gap-3 xl:grid-cols-[1.02fr_0.98fr]">
       <Card class="space-y-4">
-        <div>
+        <div class="panel-header">
+          <div>
           <p class="eyebrow">Clone Endpoints</p>
-          <h3 class="mt-2 text-2xl font-semibold text-zinc-50">Use the same repository over HTTP and SSH.</h3>
+            <h3 class="mt-1 text-lg font-semibold text-zinc-50">Clone over HTTP or SSH.</h3>
+          </div>
         </div>
         <div class="grid gap-3">
-          <div class="rounded-xl border border-zinc-800 bg-black/30 p-4">
+          <div class="rounded-lg border border-zinc-800 bg-black/30 p-3">
             <p class="eyebrow">Smart HTTP</p>
             <p class="mt-2 break-all font-mono text-xs text-zinc-200">
               {{ workspace.repositoryQuery.data.value?.http_clone_url }}
             </p>
           </div>
-          <div class="rounded-xl border border-zinc-800 bg-black/30 p-4">
+          <div class="rounded-lg border border-zinc-800 bg-black/30 p-3">
             <p class="eyebrow">SSH</p>
             <p class="mt-2 break-all font-mono text-xs text-zinc-200">
               {{ workspace.repositoryQuery.data.value?.ssh_clone_url || 'SSH disabled' }}
             </p>
           </div>
           <div class="grid gap-3 md:grid-cols-3">
-            <div class="rounded-xl border border-zinc-800 bg-black/30 p-4">
+            <div class="rounded-lg border border-zinc-800 bg-black/30 p-3">
               <p class="eyebrow">Visibility</p>
               <p class="mt-2 text-base font-semibold text-zinc-100">
                 {{ workspace.repositoryQuery.data.value?.repository.visibility }}
               </p>
             </div>
-            <div class="rounded-xl border border-zinc-800 bg-black/30 p-4">
+            <div class="rounded-lg border border-zinc-800 bg-black/30 p-3">
               <p class="eyebrow">Owner Type</p>
               <p class="mt-2 text-base font-semibold text-zinc-100">
                 {{ workspace.repositoryQuery.data.value?.repository.owner_type }}
               </p>
             </div>
-            <div class="rounded-xl border border-zinc-800 bg-black/30 p-4">
+            <div class="rounded-lg border border-zinc-800 bg-black/30 p-3">
               <p class="eyebrow">Archived</p>
               <p class="mt-2 text-base font-semibold text-zinc-100">
                 {{ workspace.repositoryQuery.data.value?.repository.archived ? 'Yes' : 'No' }}
@@ -100,13 +102,15 @@ async function handleAddCollaborator() {
         </div>
       </Card>
 
-      <div class="space-y-4">
+      <div class="space-y-3">
         <Card class="space-y-4">
-          <div>
+          <div class="panel-header">
+            <div>
             <p class="eyebrow">Collaborators</p>
-            <h3 class="mt-2 text-2xl font-semibold text-zinc-50">Extend access without leaving the workspace.</h3>
+              <h3 class="mt-1 text-lg font-semibold text-zinc-50">Manage collaborators.</h3>
+            </div>
           </div>
-          <div class="space-y-4 rounded-xl border border-zinc-800 bg-black/30 p-4">
+          <div class="space-y-4 rounded-lg border border-zinc-800 bg-black/30 p-3">
             <div>
               <label class="field-label">Username</label>
               <Input v-model="collaboratorForm.username" placeholder="teammate" />
@@ -139,19 +143,21 @@ async function handleAddCollaborator() {
         </Card>
 
         <Card class="space-y-4">
-          <div>
+          <div class="panel-header">
+            <div>
             <p class="eyebrow">Access Model</p>
-            <h3 class="mt-2 text-xl font-semibold text-zinc-50">Keep the permission surface understandable.</h3>
+              <h3 class="mt-1 text-lg font-semibold text-zinc-50">Scope</h3>
+            </div>
           </div>
           <div class="grid gap-3 text-sm text-zinc-400">
-            <div class="rounded-xl border border-zinc-800 bg-black/30 p-4">
-              Browser access, Smart HTTP, and SSH all reuse the same repository ownership and collaborator rules.
+            <div class="rounded-lg border border-zinc-800 bg-black/30 p-3">
+              Browser access, Smart HTTP, and SSH use the same repository permissions.
             </div>
-            <div class="rounded-xl border border-zinc-800 bg-black/30 p-4">
-              Workspace-level navigation keeps organizations and keys separate from repository-local permissions.
+            <div class="rounded-lg border border-zinc-800 bg-black/30 p-3">
+              Organizations and SSH keys stay at workspace scope.
             </div>
-            <div class="rounded-xl border border-zinc-800 bg-black/30 p-4">
-              Future settings can be introduced as new repository tabs without changing the surrounding shell.
+            <div class="rounded-lg border border-zinc-800 bg-black/30 p-3">
+              Additional access controls can land as new repository tabs.
             </div>
           </div>
         </Card>

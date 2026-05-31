@@ -84,11 +84,11 @@ async function handleDeleteWebhook(webhookId: number) {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="section-stack">
     <PageHeader
       eyebrow="Automation"
-      title="Integration endpoints sit beside source control, not outside it."
-      description="Webhooks are isolated into a repository automation module so future CI, agent, or event-driven features can grow here without inflating the code browser."
+      title="Automation"
+      description="Configure webhook endpoints and inspect recent delivery state."
     >
       <template #actions>
         <Badge variant="accent">repository.push</Badge>
@@ -96,14 +96,16 @@ async function handleDeleteWebhook(webhookId: number) {
       </template>
     </PageHeader>
 
-    <div class="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+    <div class="grid gap-3 xl:grid-cols-[0.9fr_1.1fr]">
       <Card class="space-y-4">
-        <div>
+        <div class="panel-header">
+          <div>
           <p class="eyebrow">Create Webhook</p>
-          <h3 class="mt-2 text-2xl font-semibold text-zinc-50">Subscribe external systems to repository events.</h3>
+            <h3 class="mt-1 text-lg font-semibold text-zinc-50">Subscribe external systems.</h3>
+          </div>
         </div>
 
-        <div v-if="adminEnabled" class="space-y-4 rounded-xl border border-zinc-800 bg-black/30 p-4">
+        <div v-if="adminEnabled" class="space-y-4 rounded-lg border border-zinc-800 bg-black/30 p-3">
           <div>
             <label class="field-label">Endpoint URL</label>
             <Input v-model="webhookForm.url" placeholder="https://example.com/hooks/forge" />
@@ -123,7 +125,7 @@ async function handleDeleteWebhook(webhookId: number) {
             {{ createWebhook.isPending.value ? 'Creating...' : 'Create Webhook' }}
           </Button>
         </div>
-        <div v-else class="rounded-xl border border-zinc-800 bg-black/30 p-4 text-sm text-zinc-400">
+        <div v-else class="rounded-lg border border-zinc-800 bg-black/30 p-3 text-sm text-zinc-400">
           This account can inspect repository automation, but webhook changes require repository admin access.
         </div>
 
@@ -136,10 +138,10 @@ async function handleDeleteWebhook(webhookId: number) {
       </Card>
 
       <Card class="space-y-4">
-        <div class="flex items-center justify-between gap-3">
+        <div class="panel-header">
           <div>
             <p class="eyebrow">Webhook Inventory</p>
-            <h3 class="mt-2 text-2xl font-semibold text-zinc-50">Observe delivery health and destination count.</h3>
+            <h3 class="mt-1 text-lg font-semibold text-zinc-50">Current endpoints.</h3>
           </div>
           <Badge variant="accent">{{ webhooksQuery.data.value?.length ?? 0 }}</Badge>
         </div>
@@ -157,7 +159,7 @@ async function handleDeleteWebhook(webhookId: number) {
           <div
             v-for="webhook in webhooksQuery.data.value"
             :key="webhook.id"
-            class="rounded-xl border border-zinc-800 bg-black/30 p-4"
+            class="rounded-lg border border-zinc-800 bg-black/30 p-3"
           >
             <div class="flex flex-wrap items-center gap-2">
               <Badge variant="accent">{{ webhook.events.join(', ') }}</Badge>
@@ -187,7 +189,7 @@ async function handleDeleteWebhook(webhookId: number) {
           title="No repository webhooks are configured."
           description="Create signed push or delete hooks for CI, deployments, or downstream automation."
         />
-        <div v-else class="rounded-xl border border-zinc-800 bg-black/30 p-4 text-sm text-zinc-400">
+        <div v-else class="rounded-lg border border-zinc-800 bg-black/30 p-3 text-sm text-zinc-400">
           Repository automation is enabled, but this account cannot list or modify admin-only webhook settings.
         </div>
       </Card>

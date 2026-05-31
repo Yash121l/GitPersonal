@@ -10,6 +10,7 @@ import Badge from '@/components/ui/Badge.vue'
 import Card from '@/components/ui/Card.vue'
 import Input from '@/components/ui/Input.vue'
 import Select from '@/components/ui/Select.vue'
+import Skeleton from '@/components/ui/Skeleton.vue'
 import { useRepositoryWorkspace } from '@/composables/useRepositoryWorkspace'
 import { api } from '@/lib/api'
 import { basename, formatBytes } from '@/lib/utils'
@@ -84,11 +85,11 @@ watch(
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="section-stack">
     <PageHeader
       eyebrow="Code"
-      title="Repository navigation stays fast as codebases grow."
-      description="The code surface keeps branch selection, tree traversal, and blob rendering isolated so the browser only loads the current path and selected file."
+      title="Code"
+      description="Browse the current branch, filter the active tree, and preview one file at a time."
     >
       <template #actions>
         <Badge variant="accent">{{ currentBranch }}</Badge>
@@ -96,7 +97,7 @@ watch(
       </template>
     </PageHeader>
 
-    <div class="grid gap-4 2xl:grid-cols-[340px_minmax(0,1fr)_320px]">
+    <div class="grid gap-3 2xl:grid-cols-[320px_minmax(0,1fr)_300px]">
       <Card class="space-y-4">
         <div class="flex items-end gap-3">
           <div class="min-w-0 flex-1">
@@ -162,24 +163,43 @@ watch(
           {{ blobErrorMessage }}
         </p>
       </div>
+      <div v-else-if="blobQuery.isLoading.value && selectedFile" class="space-y-3 rounded-2xl border border-zinc-800 bg-black/70 p-5">
+        <div class="flex items-center justify-between gap-3 border-b border-zinc-800 pb-4">
+          <div class="space-y-2">
+            <Skeleton class="h-4 w-72" />
+            <Skeleton class="h-3 w-36" />
+          </div>
+          <Skeleton class="h-6 w-32" />
+        </div>
+        <div class="grid overflow-hidden rounded-xl border border-zinc-800 md:grid-cols-[auto_1fr]">
+          <div class="space-y-2 border-r border-zinc-800 bg-zinc-950/80 px-4 py-4">
+            <Skeleton v-for="index in 12" :key="`line-${index}`" class="h-4 w-6" />
+          </div>
+          <div class="space-y-2 px-5 py-4">
+            <Skeleton v-for="index in 12" :key="`content-${index}`" class="h-4 w-full" />
+          </div>
+        </div>
+      </div>
       <CodePreview v-else :blob="blobQuery.data.value?.blob ?? null" />
 
-      <div class="space-y-4">
+      <div class="space-y-3">
         <Card class="space-y-4">
-          <div>
+          <div class="panel-header">
+            <div>
             <p class="eyebrow">Navigation Context</p>
-            <h3 class="mt-2 text-2xl font-semibold text-zinc-50">Focused on the current branch and path.</h3>
+              <h3 class="mt-1 text-lg font-semibold text-zinc-50">Current selection</h3>
+            </div>
           </div>
           <div class="grid gap-3 text-sm text-zinc-400">
-            <div class="rounded-xl border border-zinc-800 bg-black/30 p-4">
+            <div class="rounded-lg border border-zinc-800 bg-black/30 p-3">
               <p class="eyebrow">Selected Path</p>
               <p class="mt-2 font-mono text-xs text-zinc-200">{{ selectedPath || 'root' }}</p>
             </div>
-            <div class="rounded-xl border border-zinc-800 bg-black/30 p-4">
+            <div class="rounded-lg border border-zinc-800 bg-black/30 p-3">
               <p class="eyebrow">Selected File</p>
               <p class="mt-2 font-mono text-xs text-zinc-200">{{ selectedFile || 'No file selected' }}</p>
             </div>
-            <div class="rounded-xl border border-zinc-800 bg-black/30 p-4">
+            <div class="rounded-lg border border-zinc-800 bg-black/30 p-3">
               <p class="eyebrow">Visible Entries</p>
               <p class="mt-2 text-2xl font-semibold text-zinc-50">{{ filteredEntries.length }}</p>
             </div>
@@ -187,20 +207,21 @@ watch(
         </Card>
 
         <Card class="space-y-4">
-          <div>
+          <div class="panel-header">
+            <div>
             <p class="eyebrow">Current Tree</p>
-            <h3 class="mt-2 text-xl font-semibold text-zinc-50">{{ selectedPath || 'root' }}</h3>
+              <h3 class="mt-1 text-lg font-semibold text-zinc-50">{{ selectedPath || 'root' }}</h3>
+            </div>
           </div>
           <p class="text-sm text-zinc-400">
             {{ filteredEntries.length }} item{{ filteredEntries.length === 1 ? '' : 's' }} visible in this path.
           </p>
-          <div v-if="firstVisibleEntry" class="rounded-xl border border-zinc-800 bg-black/30 p-4 text-sm text-zinc-400">
-            Ready to inspect <span class="font-semibold text-zinc-100">{{ basename(firstVisibleEntry.path) }}</span>
-            or any other file from the tree. Directories and blob previews remain bounded so large repositories stay usable.
+          <div v-if="firstVisibleEntry" class="rounded-lg border border-zinc-800 bg-black/30 p-3 text-sm text-zinc-400">
+            Next likely file: <span class="font-semibold text-zinc-100">{{ basename(firstVisibleEntry.path) }}</span>.
           </div>
           <div
             v-if="blobQuery.data.value?.blob"
-            class="rounded-xl border border-zinc-800 bg-black/30 p-4 text-sm text-zinc-400"
+            class="rounded-lg border border-zinc-800 bg-black/30 p-3 text-sm text-zinc-400"
           >
             <p class="eyebrow">Preview</p>
             <p class="mt-2 font-mono text-xs text-zinc-200">{{ blobQuery.data.value.blob.path }}</p>

@@ -110,19 +110,19 @@ async function handleCreateOrganizationRepository() {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="section-stack">
     <PageHeader
       eyebrow="Repositories"
-      title="Operate repositories from one workspace."
-      description="The browser app stays thin over the real Forge APIs. Repository cards, organization forms, and repo creation flows are all talking to the same backend contract your CLI and Git transport already use."
+      title="Repositories"
+      description="Browse visible repositories and create personal or organization-owned repos."
     />
 
-    <div class="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-      <Card class="space-y-5">
-        <div class="flex items-center justify-between gap-3">
+    <div class="grid gap-3 xl:grid-cols-[1.12fr_0.88fr]">
+      <Card class="space-y-4">
+        <div class="panel-header">
           <div>
             <p class="eyebrow">Visible Repositories</p>
-            <h3 class="mt-2 text-2xl font-semibold text-zinc-50">
+            <h3 class="mt-1 text-lg font-semibold text-zinc-50">
               {{ repositories.length }} repository{{ repositories.length === 1 ? '' : 'ies' }}
             </h3>
           </div>
@@ -137,19 +137,19 @@ async function handleCreateOrganizationRepository() {
             v-for="repository in repositories"
             :key="`${repository.owner}/${repository.name}`"
             :to="{ name: 'repository-code', params: { owner: repository.owner, repo: repository.name } }"
-            class="group rounded-xl border border-zinc-800 bg-black/30 p-5 transition hover:-translate-y-0.5 hover:border-zinc-700 hover:bg-zinc-950"
+            class="group rounded-lg border border-zinc-800 bg-black/30 p-4 transition hover:border-zinc-700 hover:bg-zinc-950"
           >
             <div class="flex flex-wrap items-center gap-2">
               <Badge>{{ repository.owner_type }}</Badge>
               <Badge variant="accent">{{ repository.visibility }}</Badge>
             </div>
-            <h3 class="mt-3 font-mono text-xl font-semibold text-zinc-50 group-hover:text-white">
+            <h3 class="mt-2.5 font-mono text-base font-semibold text-zinc-50 group-hover:text-white">
               {{ repository.owner }}/{{ repository.name }}
             </h3>
-            <p class="mt-2 text-sm text-zinc-400">
+            <p class="mt-1.5 text-sm text-zinc-400">
               {{ repository.description || 'No description yet.' }}
             </p>
-            <div class="mt-4 flex flex-wrap gap-4 text-xs text-zinc-500">
+            <div class="meta-list mt-3">
               <span>Default branch: {{ repository.default_branch }}</span>
               <span>Updated {{ formatDate(repository.updated_at) }}</span>
             </div>
@@ -168,11 +168,13 @@ async function handleCreateOrganizationRepository() {
         </EmptyState>
       </Card>
 
-      <div class="space-y-4">
+      <div class="space-y-3">
         <Card class="space-y-4">
-          <div>
-            <p class="eyebrow">Create Personal Repository</p>
-            <h3 class="mt-2 text-xl font-semibold text-zinc-50">Ship to your own namespace.</h3>
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Create Personal Repository</p>
+              <h3 class="mt-1 text-lg font-semibold text-zinc-50">Personal repository</h3>
+            </div>
           </div>
           <div>
             <label class="field-label">Name</label>
@@ -202,9 +204,11 @@ async function handleCreateOrganizationRepository() {
         </Card>
 
         <Card class="space-y-4">
-          <div>
-            <p class="eyebrow">Create Organization</p>
-            <h3 class="mt-2 text-xl font-semibold text-zinc-50">Set up a shared namespace.</h3>
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Create Organization</p>
+              <h3 class="mt-1 text-lg font-semibold text-zinc-50">Organization namespace</h3>
+            </div>
           </div>
           <div>
             <label class="field-label">Slug</label>
@@ -224,9 +228,11 @@ async function handleCreateOrganizationRepository() {
         </Card>
 
         <Card class="space-y-4">
-          <div>
-            <p class="eyebrow">Create Organization Repository</p>
-            <h3 class="mt-2 text-xl font-semibold text-zinc-50">Use shared ownership flows.</h3>
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Create Organization Repository</p>
+              <h3 class="mt-1 text-lg font-semibold text-zinc-50">Organization repository</h3>
+            </div>
           </div>
           <div v-if="organizations.length === 0" class="rounded-lg border border-zinc-800 bg-black/30 p-4 text-sm text-zinc-400">
             You need an organization membership before creating an organization-owned repository.

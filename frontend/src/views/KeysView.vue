@@ -5,6 +5,8 @@ import { reactive, ref } from 'vue'
 
 import EmptyState from '@/components/empty/EmptyState.vue'
 import PageHeader from '@/components/app/PageHeader.vue'
+import CardSkeletonGrid from '@/components/state/CardSkeletonGrid.vue'
+import ViewState from '@/components/state/ViewState.vue'
 import Badge from '@/components/ui/Badge.vue'
 import Button from '@/components/ui/Button.vue'
 import Card from '@/components/ui/Card.vue'
@@ -49,18 +51,20 @@ async function handleAddKey() {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="section-stack">
     <PageHeader
       eyebrow="SSH Keys"
-      title="Keep browser auth and Git auth aligned."
-      description="The same account can sign into the browser, push over Smart HTTP, and authenticate over SSH. This screen keeps your SSH inventory visible with usage timestamps and fingerprints."
+      title="SSH Keys"
+      description="Register SSH public keys for clone and push access."
     />
 
-    <div class="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+    <div class="grid gap-3 xl:grid-cols-[0.92fr_1.08fr]">
       <Card class="space-y-4">
-        <div>
-          <p class="eyebrow">Register Key</p>
-          <h3 class="mt-2 text-2xl font-semibold text-zinc-50">Add a new SSH public key.</h3>
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Register Key</p>
+            <h3 class="mt-1 text-lg font-semibold text-zinc-50">Add public key</h3>
+          </div>
         </div>
         <div>
           <label class="field-label">Label</label>
@@ -88,34 +92,60 @@ async function handleAddKey() {
       </Card>
 
       <div class="space-y-4">
-        <Card v-if="keysQuery.data.value?.length" class="space-y-4">
-          <div>
-            <p class="eyebrow">Registered Keys</p>
-            <h3 class="mt-2 text-2xl font-semibold text-zinc-50">{{ keysQuery.data.value.length }} key{{ keysQuery.data.value.length === 1 ? '' : 's' }}</h3>
-          </div>
-          <div class="space-y-3">
-            <div
-              v-for="key in keysQuery.data.value"
-              :key="key.id"
-              class="rounded-xl border border-zinc-800 bg-black/30 p-5"
-            >
-              <div class="flex flex-wrap items-center gap-2">
-                <Badge variant="accent">{{ key.name }}</Badge>
-                <Badge>{{ key.fingerprint_sha256 }}</Badge>
+        <ViewState
+          :loading="keysQuery.isLoading.value"
+          :empty="!keysQuery.isLoading.value && (keysQuery.data.value?.length ?? 0) === 0"
+          empty-eyebrow="No Keys"
+          empty-title="This account has no SSH keys yet."
+          empty-description="Add a public key on the left to start cloning and pushing over SSH."
+        >
+          <template #loading>
+            <Card class="space-y-4">
+              <div class="panel-header">
+                <div class="space-y-2">
+                  <div class="h-3 w-32 animate-pulse rounded-lg bg-zinc-900" />
+                  <div class="h-7 w-28 animate-pulse rounded-lg bg-zinc-900" />
+                </div>
               </div>
-              <p class="mt-3 text-xs text-zinc-500">
-                Created {{ formatDate(key.created_at) }} · Last used {{ formatDate(key.last_used_at) }}
-              </p>
-              <pre class="mt-3 overflow-x-auto rounded-lg border border-zinc-800 bg-black/60 px-4 py-3 text-xs text-zinc-200">{{ key.public_key }}</pre>
+              <CardSkeletonGrid :count="3" wrapper-class="grid gap-3" item-class="h-36" />
+            </Card>
+          </template>
+
+          <template #empty>
+            <EmptyState
+              eyebrow="No Keys"
+              title="This account has no SSH keys yet."
+              description="Add a public key on the left to start cloning and pushing over SSH."
+            />
+          </template>
+
+          <Card class="space-y-4">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Registered Keys</p>
+                <h3 class="mt-1 text-lg font-semibold text-zinc-50">
+                  {{ keysQuery.data.value?.length ?? 0 }} key{{ (keysQuery.data.value?.length ?? 0) === 1 ? '' : 's' }}
+                </h3>
+              </div>
             </div>
-          </div>
-        </Card>
-        <EmptyState
-          v-else
-          eyebrow="No Keys"
-          title="This account has no SSH keys yet."
-          description="Add a public key on the left to start cloning and pushing over SSH."
-        />
+            <div class="space-y-3">
+              <div
+                v-for="key in keysQuery.data.value ?? []"
+                :key="key.id"
+                class="rounded-lg border border-zinc-800 bg-black/30 p-4"
+              >
+                <div class="flex flex-wrap items-center gap-2">
+                  <Badge variant="accent">{{ key.name }}</Badge>
+                  <Badge>{{ key.fingerprint_sha256 }}</Badge>
+                </div>
+                <p class="mt-3 text-xs text-zinc-500">
+                  Created {{ formatDate(key.created_at) }} · Last used {{ formatDate(key.last_used_at) }}
+                </p>
+                <pre class="mt-3 overflow-x-auto rounded-lg border border-zinc-800 bg-black/60 px-4 py-3 text-xs text-zinc-200">{{ key.public_key }}</pre>
+              </div>
+            </div>
+          </Card>
+        </ViewState>
       </div>
     </div>
   </div>

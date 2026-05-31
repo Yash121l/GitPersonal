@@ -55,7 +55,7 @@ const workspaceItems: WorkspaceNavigationItem[] = [
   {
     id: 'workspace-overview',
     label: 'Overview',
-    description: 'Developer dashboard and quick links.',
+    description: 'Inventory, recent repositories, and workspace status.',
     icon: Gauge,
     feature: 'workspaceOverview',
     routeName: 'overview',
@@ -66,7 +66,7 @@ const workspaceItems: WorkspaceNavigationItem[] = [
   {
     id: 'workspace-repositories',
     label: 'Repositories',
-    description: 'Browse and create repositories.',
+    description: 'Browse codebases and create new repositories.',
     icon: FolderGit2,
     feature: 'repositories',
     routeName: 'repositories',
@@ -77,7 +77,7 @@ const workspaceItems: WorkspaceNavigationItem[] = [
   {
     id: 'workspace-organizations',
     label: 'Organizations',
-    description: 'Manage shared namespaces and memberships.',
+    description: 'Shared namespaces, members, and roles.',
     icon: Landmark,
     feature: 'organizations',
     routeName: 'organizations',
@@ -88,7 +88,7 @@ const workspaceItems: WorkspaceNavigationItem[] = [
   {
     id: 'workspace-keys',
     label: 'SSH Keys',
-    description: 'Manage developer keys for Git transport.',
+    description: 'SSH identities for clone and push access.',
     icon: KeyRound,
     feature: 'sshKeys',
     routeName: 'keys',
@@ -102,7 +102,7 @@ const repositoryItems: RepositoryNavigationItem[] = [
   {
     id: 'repo-code',
     label: 'Code',
-    description: 'Tree browser, branches, and blob previews.',
+    description: 'Tree browser, branch selection, and file previews.',
     icon: FolderGit2,
     feature: 'repositoryCode',
     routeName: 'repository-code',
@@ -129,7 +129,7 @@ const repositoryItems: RepositoryNavigationItem[] = [
   {
     id: 'repo-automation',
     label: 'Automation',
-    description: 'Webhooks and event integrations.',
+    description: 'Webhooks and downstream integrations.',
     icon: Zap,
     feature: 'repositoryAutomation',
     routeName: 'repository-automation',
@@ -142,7 +142,7 @@ const repositoryItems: RepositoryNavigationItem[] = [
   {
     id: 'repo-activity',
     label: 'Activity',
-    description: 'Health, branches, and repository metadata.',
+    description: 'Repository metadata, branches, and health signals.',
     icon: Activity,
     feature: 'repositoryActivity',
     routeName: 'repository-activity',
@@ -155,7 +155,7 @@ const repositoryItems: RepositoryNavigationItem[] = [
   {
     id: 'repo-settings',
     label: 'Settings',
-    description: 'Future repository controls and guardrails.',
+    description: 'Guardrails and future repository controls.',
     icon: Settings2,
     feature: 'repositorySettings',
     routeName: 'repository-settings',

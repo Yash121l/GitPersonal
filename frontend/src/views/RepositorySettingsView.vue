@@ -7,8 +7,8 @@ import Card from '@/components/ui/Card.vue'
   <div class="space-y-6">
     <PageHeader
       eyebrow="Settings"
-      title="Reserved for future repository controls."
-      description="This route exists behind a feature flag so upcoming repository configuration surfaces can be added without changing the routing model."
+      title="Settings"
+      description="Reserved for future repository controls."
     />
 
     <Card class="space-y-3">

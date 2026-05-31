@@ -27,10 +27,10 @@ const classes = computed(() =>
 </script>
 
 <template>
-  <Card :class="classes">
+  <Card :class="cn('space-y-2', classes)">
     <p class="eyebrow">{{ props.label }}</p>
-    <p class="mt-3 text-3xl font-semibold tracking-tight text-zinc-50">{{ props.value }}</p>
-    <p v-if="props.caption" class="mt-2 text-sm leading-6 text-zinc-400">
+    <p class="text-2xl font-semibold tracking-tight text-zinc-50">{{ props.value }}</p>
+    <p v-if="props.caption" class="text-xs leading-5 text-zinc-400">
       {{ props.caption }}
     </p>
   </Card>
