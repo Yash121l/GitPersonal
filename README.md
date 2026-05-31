@@ -1,6 +1,6 @@
 # Forge
 
-Forge is a self-hosted Git platform for small trusted groups and for learning how GitHub-style systems actually work. The current repository contains a deployable backend foundation with smart HTTP and SSH Git transport, revocable sessions, PostgreSQL-backed metadata, repository maintenance scheduling, and a static documentation website under `website/`.
+Forge is a self-hosted Git platform for small trusted groups and for learning how GitHub-style systems actually work. The current repository contains a deployable backend foundation with smart HTTP and SSH Git transport, revocable sessions, PostgreSQL-backed metadata, organizations and collaborators, a browser UI, repository webhooks, and a static documentation website under `website/`.
 
 ## Current Scope
 
@@ -10,13 +10,16 @@ Implemented now:
 - `GET /healthz` liveness endpoint and `GET /readyz` dependency readiness checks
 - JWT cookie auth with register, login, logout, and current-user endpoints
 - Session persistence and logout revocation via stored session records
-- Repository CRUD API with ownership checks
+- Repository CRUD API with repository detail responses and owner-aware clone URLs
 - PostgreSQL-backed store when `DATABASE_URL` is set, with in-memory fallback for tests and no-DB runs
-- Sharded bare repository provisioning under `FORGE_REPOS_ROOT` with atomic staging, safe deletion, and repo-level mutation locking
+- Sharded bare repository provisioning under `FORGE_REPOS_ROOT` with atomic staging, safe deletion, and advisory repo-level mutation locking
 - Embedded PostgreSQL migrations applied automatically on startup
+- Organization ownership, org membership roles, and repository collaborators
 - Smart HTTP Git transport through `git-http-backend`
 - SSH Git transport with registered public keys and `git-upload-pack` / `git-receive-pack`
 - Background repository maintenance for `git gc --auto`, commit-graph refresh, and size accounting
+- Repository webhooks for push and delete events with signed async delivery and delivery status tracking
+- Browser UI at `/app` for sign-in, repo creation, org management, SSH key management, collaborator management, and webhook management
 - Production-oriented config validation, database pool tuning, request IDs, body limits, and baseline security headers
 - Non-root container runtime, health checks, and safer compose defaults for internal deployment
 - Static self-hostable documentation website under `website/`
@@ -24,16 +27,16 @@ Implemented now:
 
 Not implemented yet:
 
-- Browser UI inside Forge itself
-- Pull requests, issues, organizations flows, CI runners, notifications, and admin workflows
-- Fine-grained permissions, rate limiting, CSRF protection, audit logging, and cross-process repository locking in the PostgreSQL store
-- Webhooks, releases, Git LFS, and search
+- Pull requests, issues, code review flows, releases, and CI runners
+- Notifications, admin workflows, and broader instance management
+- Rate limiting, CSRF protection, audit logging, and richer security hardening
+- Webhook retries with persistent delivery queues, Git LFS, and search
 
 ## Quick Start
 
 1. Copy `.env.example` to `.env` and adjust the values you care about.
 2. Run `docker-compose up --build -d`.
-3. Visit `http://localhost:3000/readyz`.
+3. Visit `http://localhost:3000/app`.
 
 For local-only development without Docker:
 
@@ -58,7 +61,7 @@ GitHub Pages deployment is wired through `.github/workflows/deploy-pages.yml`. T
 
 ## API Surface
 
-The current API is JSON plus Git transport.
+The current API is JSON plus Git transport, with a browser app mounted at `/app`.
 
 - `GET /healthz`
 - `GET /readyz`
@@ -66,12 +69,22 @@ The current API is JSON plus Git transport.
 - `POST /api/v1/auth/login`
 - `POST /api/v1/auth/logout`
 - `GET /api/v1/me`
+- `GET /api/v1/keys`
 - `POST /api/v1/keys`
+- `GET /api/v1/orgs`
+- `POST /api/v1/orgs`
+- `POST /api/v1/orgs/{org}/members`
 - `GET /api/v1/repos`
+- `GET /api/v1/repos/{owner}/{repo}`
 - `POST /api/v1/repos`
 - `DELETE /api/v1/repos/{owner}/{repo}`
+- `POST /api/v1/repos/{owner}/{repo}/collaborators`
+- `GET /api/v1/repos/{owner}/{repo}/webhooks`
+- `POST /api/v1/repos/{owner}/{repo}/webhooks`
+- `DELETE /api/v1/repos/{owner}/{repo}/webhooks/{webhookID}`
 - Smart HTTP Git at `/git/{owner}/{repo}.git`
 - SSH Git at `ssh://git@host:2222/{owner}/{repo}.git`
+- Browser UI at `/app`, `/app/repos`, `/app/orgs`, `/app/keys`, and `/app/repos/{owner}/{repo}`
 
 Example register request:
 
@@ -86,6 +99,8 @@ Example repository creation request:
 
 ```json
 {
+  "owner": "team",
+  "owner_type": "organization",
   "name": "forge",
   "description": "Self-hosted git platform",
   "visibility": "private",
@@ -109,8 +124,8 @@ Example repository creation request:
 
 ## Architecture Note
 
-Bare repositories on disk are still the correct Git storage primitive here. The scaling work is in the operational layer around them: sharded layout, atomic provisioning, coordinated mutations, background maintenance, transport isolation, and indexing. One important current gap remains: the PostgreSQL store does not yet implement cross-process repository leases, so mutation serialization is not complete across multiple processes.
+Bare repositories on disk are still the correct Git storage primitive here. The scaling work is in the operational layer around them: sharded layout, atomic provisioning, PostgreSQL advisory leases, coordinated mutations, background maintenance, transport isolation, authorization, and webhook delivery around Git events.
 
 ## Next Build Step
 
-The natural next step is to expand the authorization model beyond owner/public rules, then add the web product layer: repo browsing, org ownership flows, and collaboration surfaces backed by the existing transport and storage foundation.
+The natural next step is product depth rather than core plumbing: pull requests, issues, release flows, stronger security controls, and a more durable background job model for webhook retries and future automation.
