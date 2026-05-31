@@ -1,6 +1,6 @@
 # Forge
 
-Forge is a self-hosted Git platform for small trusted groups and for learning how GitHub-style systems actually work. The current repository contains a deployable backend foundation with smart HTTP and SSH Git transport, revocable sessions, PostgreSQL-backed metadata, organizations and collaborators, a browser UI, repository webhooks, and a static documentation website under `website/`.
+Forge is a self-hosted Git platform for small trusted groups and for learning how GitHub-style systems actually work. The current repository contains a deployable backend foundation with smart HTTP and SSH Git transport, revocable sessions, PostgreSQL-backed metadata, organizations and collaborators, a browser UI, repository webhooks, and a MkDocs Material documentation site under `docs/`.
 
 ## Current Scope
 
@@ -22,7 +22,7 @@ Implemented now:
 - Browser UI at `/app` for sign-in, repo creation, org management, SSH key management, collaborator management, and webhook management
 - Production-oriented config validation, database pool tuning, request IDs, body limits, and baseline security headers
 - Non-root container runtime, health checks, and safer compose defaults for internal deployment
-- Static self-hostable documentation website under `website/`
+- MkDocs Material documentation site under `docs/`
 - `docker-compose.yml`, `Dockerfile`, and `sqlc` configuration to anchor local development
 
 Not implemented yet:
@@ -47,15 +47,22 @@ go run ./cmd/forge
 
 ## Documentation Website
 
-The project ships a static self-hostable website in `website/` with product positioning, architecture notes, API reference, data model details, deployment guidance, and testing notes.
+The project ships a MkDocs Material documentation site in `docs/` with a quickstart, guides, and reference pages for architecture, API behavior, data model details, deployment, and testing.
 
-Preview it locally:
+Install the docs dependencies and preview locally:
 
 ```bash
-python3 -m http.server 4173 -d website
+python3 -m pip install -r requirements-docs.txt
+mkdocs serve
 ```
 
-Then open `http://127.0.0.1:4173/`.
+Then open `http://127.0.0.1:8000/`.
+
+To produce a production build locally:
+
+```bash
+mkdocs build --strict
+```
 
 GitHub Pages deployment is wired through `.github/workflows/deploy-pages.yml`. To use it, enable GitHub Pages in the repository settings and choose GitHub Actions as the source.
 
@@ -120,7 +127,8 @@ Example repository creation request:
 - `db/migrations`: PostgreSQL schema evolution
 - `db/queries`: starter `sqlc` query definitions
 - `deploy`: container and reverse proxy assets
-- `website`: static documentation site for project positioning and detailed technical docs
+- `docs`: MkDocs documentation source files
+- `mkdocs.yml`: MkDocs Material site configuration
 
 ## Architecture Note
 

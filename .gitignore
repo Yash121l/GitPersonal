@@ -4,6 +4,6 @@
 .vscode/
 bin/
 dist/
+site/
 tmp/
 coverage.out
-
