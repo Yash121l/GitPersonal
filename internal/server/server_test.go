@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -453,40 +455,58 @@ func TestRepositoryDetailsSSHKeysAndUIRoutes(t *testing.T) {
 	}
 
 	loginPage := performJSONRequest(t, app.Router(), http.MethodGet, "/app/login", nil, nil)
-	if loginPage.Code != http.StatusOK || !bytes.Contains(loginPage.Body.Bytes(), []byte(`data-view="login"`)) {
+	if loginPage.Code != http.StatusOK {
 		t.Fatalf("unexpected login page response: %d %s", loginPage.Code, loginPage.Body.String())
 	}
+	if !bytes.Contains(loginPage.Body.Bytes(), []byte(`<div id="app"></div>`)) {
+		t.Fatalf("expected SPA app shell, got %s", loginPage.Body.String())
+	}
+	if !bytes.Contains(loginPage.Body.Bytes(), []byte(`/app/assets/`+uiBundle.EntryScript)) {
+		t.Fatalf("expected app javascript entry, got %s", loginPage.Body.String())
+	}
+	if loginPage.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("expected login page to disable caching, got %s", loginPage.Header().Get("Cache-Control"))
+	}
 
-	req := httptest.NewRequest(http.MethodGet, "/app/repos", nil)
+	req := httptest.NewRequest(http.MethodGet, "/app/overview", nil)
 	redirectRecorder := httptest.NewRecorder()
 	app.Router().ServeHTTP(redirectRecorder, req)
 	if redirectRecorder.Code != http.StatusFound {
-		t.Fatalf("expected unauthenticated app repos request to redirect, got %d", redirectRecorder.Code)
+		t.Fatalf("expected unauthenticated app overview request to redirect, got %d", redirectRecorder.Code)
 	}
 	if location := redirectRecorder.Header().Get("Location"); location != "/app/login" {
 		t.Fatalf("unexpected redirect location: %s", location)
 	}
 
-	reposPageRequest := httptest.NewRequest(http.MethodGet, "/app/repos", nil)
+	reposPageRequest := httptest.NewRequest(http.MethodGet, "/app/overview", nil)
 	reposPageRequest.AddCookie(cookie)
 	reposPage := httptest.NewRecorder()
 	app.Router().ServeHTTP(reposPage, reposPageRequest)
-	if reposPage.Code != http.StatusOK || !bytes.Contains(reposPage.Body.Bytes(), []byte(`data-view="repos"`)) {
+	if reposPage.Code != http.StatusOK {
 		t.Fatalf("unexpected repos page response: %d %s", reposPage.Code, reposPage.Body.String())
 	}
+	if !bytes.Contains(reposPage.Body.Bytes(), []byte(`window.__FORGE_BOOTSTRAP__`)) {
+		t.Fatalf("expected SPA bootstrap payload, got %s", reposPage.Body.String())
+	}
+	if !bytes.Contains(reposPage.Body.Bytes(), []byte(`"workspaceOverview":true`)) {
+		t.Fatalf("expected feature flags in bootstrap payload, got %s", reposPage.Body.String())
+	}
 
-	repoPageRequest := httptest.NewRequest(http.MethodGet, "/app/repos/yash/forge", nil)
+	repoPageRequest := httptest.NewRequest(http.MethodGet, "/app/repos/yash/forge/code", nil)
 	repoPageRequest.AddCookie(cookie)
 	repoPage := httptest.NewRecorder()
 	app.Router().ServeHTTP(repoPage, repoPageRequest)
-	if repoPage.Code != http.StatusOK || !bytes.Contains(repoPage.Body.Bytes(), []byte(`data-view="repo"`)) {
+	if repoPage.Code != http.StatusOK {
 		t.Fatalf("unexpected repo page response: %d %s", repoPage.Code, repoPage.Body.String())
 	}
-	if !bytes.Contains(repoPage.Body.Bytes(), []byte(`data-repo-owner="yash"`)) {
-		t.Fatalf("expected repo page owner metadata, got %s", repoPage.Body.String())
+	if len(uiBundle.Stylesheets) == 0 {
+		t.Fatal("expected vite bundle to expose at least one stylesheet")
+	}
+	if !bytes.Contains(repoPage.Body.Bytes(), []byte(`/app/assets/`+uiBundle.Stylesheets[0])) {
+		t.Fatalf("expected SPA stylesheet reference, got %s", repoPage.Body.String())
 	}
 
-	assetRequest := httptest.NewRequest(http.MethodGet, "/app/assets/app.css", nil)
+	assetRequest := httptest.NewRequest(http.MethodGet, "/app/assets/"+uiBundle.Stylesheets[0], nil)
 	assetResponse := httptest.NewRecorder()
 	app.Router().ServeHTTP(assetResponse, assetRequest)
 	if assetResponse.Code != http.StatusOK {
@@ -495,8 +515,201 @@ func TestRepositoryDetailsSSHKeysAndUIRoutes(t *testing.T) {
 	if contentType := assetResponse.Header().Get("Content-Type"); contentType == "" || !bytes.Contains([]byte(contentType), []byte("text/css")) {
 		t.Fatalf("unexpected app css content type: %s", contentType)
 	}
-	if !bytes.Contains(assetResponse.Body.Bytes(), []byte("--bg:")) {
+	if !bytes.Contains(assetResponse.Body.Bytes(), []byte(".page-shell")) {
 		t.Fatalf("expected app css payload, got %s", assetResponse.Body.String())
+	}
+	if assetResponse.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" {
+		t.Fatalf("unexpected app css cache control: %s", assetResponse.Header().Get("Cache-Control"))
+	}
+}
+
+func TestRepositoryBrowserEndpoints(t *testing.T) {
+	t.Parallel()
+
+	app, repositories := newTestServer(t)
+
+	register := performJSONRequest(t, app.Router(), http.MethodPost, "/api/v1/auth/register", map[string]string{
+		"username": "yash",
+		"password": "correct horse battery staple",
+	}, nil)
+	if register.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, body = %s", register.Code, register.Body.String())
+	}
+	cookie := firstCookie(t, register.Result().Cookies(), "forge_session")
+
+	createRepo := performJSONRequest(t, app.Router(), http.MethodPost, "/api/v1/repos", map[string]string{
+		"name":           "forge",
+		"description":    "Self-hosted git platform",
+		"visibility":     "private",
+		"default_branch": "main",
+	}, cookie)
+	if createRepo.Code != http.StatusCreated {
+		t.Fatalf("create repo status = %d, body = %s", createRepo.Code, createRepo.Body.String())
+	}
+
+	repo, err := repositories.GetRepository(t.Context(), "yash", "forge")
+	if err != nil {
+		t.Fatalf("get repository: %v", err)
+	}
+	seedRepositoryBrowserFixture(t, repo.RepoPath)
+
+	branchesResponse := performJSONRequest(t, app.Router(), http.MethodGet, "/api/v1/repos/yash/forge/branches", nil, cookie)
+	if branchesResponse.Code != http.StatusOK {
+		t.Fatalf("branches status = %d, body = %s", branchesResponse.Code, branchesResponse.Body.String())
+	}
+
+	var branchesBody struct {
+		Branches []struct {
+			Name string `json:"name"`
+		} `json:"branches"`
+	}
+	if err := json.Unmarshal(branchesResponse.Body.Bytes(), &branchesBody); err != nil {
+		t.Fatalf("decode branches response: %v", err)
+	}
+	if len(branchesBody.Branches) != 1 || branchesBody.Branches[0].Name != "main" {
+		t.Fatalf("unexpected branches payload: %+v", branchesBody.Branches)
+	}
+
+	treeResponse := performJSONRequest(t, app.Router(), http.MethodGet, "/api/v1/repos/yash/forge/tree?ref=main", nil, cookie)
+	if treeResponse.Code != http.StatusOK {
+		t.Fatalf("tree status = %d, body = %s", treeResponse.Code, treeResponse.Body.String())
+	}
+
+	var treeBody struct {
+		Ref     string `json:"ref"`
+		Path    string `json:"path"`
+		Entries []struct {
+			Path string `json:"path"`
+			Type string `json:"type"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(treeResponse.Body.Bytes(), &treeBody); err != nil {
+		t.Fatalf("decode tree response: %v", err)
+	}
+	if treeBody.Ref != "main" || treeBody.Path != "" {
+		t.Fatalf("unexpected tree metadata: %+v", treeBody)
+	}
+	if len(treeBody.Entries) != 2 {
+		t.Fatalf("expected root tree entries, got %+v", treeBody.Entries)
+	}
+
+	seenTreeEntries := map[string]string{}
+	for _, entry := range treeBody.Entries {
+		seenTreeEntries[entry.Path] = entry.Type
+	}
+	if seenTreeEntries["README.md"] != "blob" {
+		t.Fatalf("expected README blob entry, got %+v", treeBody.Entries)
+	}
+	if seenTreeEntries["src"] != "tree" {
+		t.Fatalf("expected src tree entry, got %+v", treeBody.Entries)
+	}
+
+	nestedTree := performJSONRequest(t, app.Router(), http.MethodGet, "/api/v1/repos/yash/forge/tree?ref=main&path=src", nil, cookie)
+	if nestedTree.Code != http.StatusOK {
+		t.Fatalf("nested tree status = %d, body = %s", nestedTree.Code, nestedTree.Body.String())
+	}
+
+	var nestedTreeBody struct {
+		Entries []struct {
+			Path string `json:"path"`
+			Type string `json:"type"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(nestedTree.Body.Bytes(), &nestedTreeBody); err != nil {
+		t.Fatalf("decode nested tree response: %v", err)
+	}
+	if len(nestedTreeBody.Entries) != 1 || nestedTreeBody.Entries[0].Path != "src/main.go" || nestedTreeBody.Entries[0].Type != "blob" {
+		t.Fatalf("unexpected nested tree payload: %+v", nestedTreeBody.Entries)
+	}
+
+	blobResponse := performJSONRequest(t, app.Router(), http.MethodGet, "/api/v1/repos/yash/forge/blob?ref=main&path=src/main.go", nil, cookie)
+	if blobResponse.Code != http.StatusOK {
+		t.Fatalf("blob status = %d, body = %s", blobResponse.Code, blobResponse.Body.String())
+	}
+
+	var blobBody struct {
+		Ref  string `json:"ref"`
+		Blob struct {
+			Path      string `json:"path"`
+			Content   string `json:"content"`
+			Language  string `json:"language"`
+			Truncated bool   `json:"truncated"`
+			IsBinary  bool   `json:"is_binary"`
+		} `json:"blob"`
+	}
+	if err := json.Unmarshal(blobResponse.Body.Bytes(), &blobBody); err != nil {
+		t.Fatalf("decode blob response: %v", err)
+	}
+	if blobBody.Ref != "main" || blobBody.Blob.Path != "src/main.go" {
+		t.Fatalf("unexpected blob metadata: %+v", blobBody)
+	}
+	if blobBody.Blob.Language != "go" || blobBody.Blob.Truncated || blobBody.Blob.IsBinary {
+		t.Fatalf("unexpected blob properties: %+v", blobBody.Blob)
+	}
+	if !bytes.Contains([]byte(blobBody.Blob.Content), []byte(`fmt.Println("forge")`)) {
+		t.Fatalf("unexpected blob content: %q", blobBody.Blob.Content)
+	}
+
+	invalidTree := performJSONRequest(t, app.Router(), http.MethodGet, "/api/v1/repos/yash/forge/tree?path=../etc", nil, cookie)
+	if invalidTree.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid tree path to fail with 400, got %d with body %s", invalidTree.Code, invalidTree.Body.String())
+	}
+}
+
+func TestListEndpointsReturnEmptyArrays(t *testing.T) {
+	t.Parallel()
+
+	app, _ := newTestServer(t)
+
+	register := performJSONRequest(t, app.Router(), http.MethodPost, "/api/v1/auth/register", map[string]string{
+		"username": "emptylists",
+		"password": "correct horse battery staple",
+	}, nil)
+	if register.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, body = %s", register.Code, register.Body.String())
+	}
+	cookie := firstCookie(t, register.Result().Cookies(), "forge_session")
+
+	repositoriesResponse := performJSONRequest(t, app.Router(), http.MethodGet, "/api/v1/repos", nil, cookie)
+	if repositoriesResponse.Code != http.StatusOK {
+		t.Fatalf("repos status = %d, body = %s", repositoriesResponse.Code, repositoriesResponse.Body.String())
+	}
+	var repositoriesBody struct {
+		Repositories []json.RawMessage `json:"repositories"`
+	}
+	if err := json.Unmarshal(repositoriesResponse.Body.Bytes(), &repositoriesBody); err != nil {
+		t.Fatalf("decode repositories response: %v", err)
+	}
+	if repositoriesBody.Repositories == nil {
+		t.Fatalf("expected repositories to serialize as an empty array, got %s", repositoriesResponse.Body.String())
+	}
+
+	organizationsResponse := performJSONRequest(t, app.Router(), http.MethodGet, "/api/v1/orgs", nil, cookie)
+	if organizationsResponse.Code != http.StatusOK {
+		t.Fatalf("organizations status = %d, body = %s", organizationsResponse.Code, organizationsResponse.Body.String())
+	}
+	var organizationsBody struct {
+		Organizations []json.RawMessage `json:"organizations"`
+	}
+	if err := json.Unmarshal(organizationsResponse.Body.Bytes(), &organizationsBody); err != nil {
+		t.Fatalf("decode organizations response: %v", err)
+	}
+	if organizationsBody.Organizations == nil {
+		t.Fatalf("expected organizations to serialize as an empty array, got %s", organizationsResponse.Body.String())
+	}
+
+	keysResponse := performJSONRequest(t, app.Router(), http.MethodGet, "/api/v1/keys", nil, cookie)
+	if keysResponse.Code != http.StatusOK {
+		t.Fatalf("keys status = %d, body = %s", keysResponse.Code, keysResponse.Body.String())
+	}
+	var keysBody struct {
+		Keys []json.RawMessage `json:"keys"`
+	}
+	if err := json.Unmarshal(keysResponse.Body.Bytes(), &keysBody); err != nil {
+		t.Fatalf("decode keys response: %v", err)
+	}
+	if keysBody.Keys == nil {
+		t.Fatalf("expected keys to serialize as an empty array, got %s", keysResponse.Body.String())
 	}
 }
 
@@ -534,4 +747,27 @@ func firstCookie(t *testing.T, cookies []*http.Cookie, name string) *http.Cookie
 
 	t.Fatalf("missing cookie %q", name)
 	return nil
+}
+
+func seedRepositoryBrowserFixture(t *testing.T, repoPath string) {
+	t.Helper()
+
+	worktree := t.TempDir()
+	runGit(t, worktree, nil, "init")
+	runGit(t, worktree, nil, "config", "user.email", "yash@example.com")
+	runGit(t, worktree, nil, "config", "user.name", "Yash")
+
+	if err := os.MkdirAll(filepath.Join(worktree, "src"), 0o755); err != nil {
+		t.Fatalf("create fixture src directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, "README.md"), []byte("# Forge\n"), 0o644); err != nil {
+		t.Fatalf("write fixture readme: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, "src", "main.go"), []byte("package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(\"forge\") }\n"), 0o644); err != nil {
+		t.Fatalf("write fixture go file: %v", err)
+	}
+
+	runGit(t, worktree, nil, "add", "README.md", "src/main.go")
+	runGit(t, worktree, nil, "commit", "-m", "seed browser fixture")
+	runGit(t, worktree, nil, "push", repoPath, "HEAD:refs/heads/main")
 }

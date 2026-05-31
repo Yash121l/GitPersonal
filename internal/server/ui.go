@@ -2,82 +2,88 @@ package server
 
 import (
 	"embed"
+	"encoding/json"
+	"fmt"
 	"html/template"
 	"io/fs"
-	"net"
 	"net/http"
-	"net/url"
-	"strings"
-
-	"github.com/go-chi/chi/v5"
+	"path"
+	"regexp"
+	"slices"
 )
 
-//go:embed ui/*
+//go:embed all:ui/dist
 var uiAssets embed.FS
 
-var uiStaticFS = mustSubFS(uiAssets, "ui")
+var uiStaticFS = mustSubFS(uiAssets, "ui/dist")
+var uiBundle = mustLoadUIBundle(uiStaticFS)
+
+var uiBootstrap = mustMarshalUIBootstrap(map[string]any{
+	"basePath":    "/app/",
+	"productName": "Forge",
+	"features": map[string]bool{
+		"workspaceOverview":    true,
+		"repositories":         true,
+		"organizations":        true,
+		"sshKeys":              true,
+		"repositoryCode":       true,
+		"repositoryAccess":     true,
+		"repositoryAutomation": true,
+		"repositoryActivity":   true,
+		"repositorySettings":   false,
+	},
+})
 
 var uiPageTemplate = template.Must(template.New("ui-page").Parse(`<!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ .Title }}</title>
-  <link rel="stylesheet" href="/app/assets/app.css">
-  <script defer src="/app/assets/app.js"></script>
+  <meta name="description" content="Forge is a self-hosted Git platform for trusted teams.">
+  <meta name="theme-color" content="#09090b">
+  {{- range .Stylesheets }}
+  <link rel="stylesheet" href="/app/assets/{{ . }}">
+  {{- end }}
 </head>
-<body data-view="{{ .View }}" data-repo-owner="{{ .RepoOwner }}" data-repo-name="{{ .RepoName }}">
-  <div class="app-shell">
-    <header class="app-topbar">
-      <a class="app-brand" href="/app/repos">
-        <span class="app-brand-mark">F</span>
-        <span class="app-brand-copy">
-          <strong>Forge</strong>
-          <span>Self-hosted Git</span>
-        </span>
-      </a>
-      <nav class="app-nav">
-        <a href="/app/repos">Repositories</a>
-        <a href="/app/orgs">Organizations</a>
-        <a href="/app/keys">SSH Keys</a>
-        <button type="button" class="ghost-button" data-action="logout">Log Out</button>
-      </nav>
-    </header>
-    <main class="app-main">
-      <div class="app-messages" data-flash aria-live="polite"></div>
-      <div class="app-root" data-app></div>
-    </main>
-  </div>
+<body>
+  <div id="app"></div>
+  <script>
+    window.__FORGE_BOOTSTRAP__ = {{ .Bootstrap }};
+  </script>
+  <script type="module" src="/app/assets/{{ .EntryScript }}"></script>
 </body>
 </html>`))
 
 type uiPageData struct {
-	Title     string
-	View      string
-	RepoOwner string
-	RepoName  string
+	Title       string
+	Bootstrap   template.JS
+	EntryScript string
+	Stylesheets []string
+}
+
+type uiManifestEntry struct {
+	File    string   `json:"file"`
+	IsEntry bool     `json:"isEntry"`
+	CSS     []string `json:"css"`
+}
+
+type uiBundleAssets struct {
+	EntryScript string
+	Stylesheets []string
 }
 
 func (s *Server) handleAppEntry(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.authenticateSession(r); err == nil {
-		http.Redirect(w, r, "/app/repos", http.StatusFound)
+		http.Redirect(w, r, "/app/overview", http.StatusFound)
 		return
 	}
 	http.Redirect(w, r, "/app/login", http.StatusFound)
 }
 
-func (s *Server) handleUIPage(title, view string) http.Handler {
+func (s *Server) handleUIPage(title string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s.renderUIPage(w, uiPageData{Title: title, View: view})
-	})
-}
-
-func (s *Server) handleUIRepositoryPage(w http.ResponseWriter, r *http.Request) {
-	s.renderUIPage(w, uiPageData{
-		Title:     "Repository",
-		View:      "repo",
-		RepoOwner: chi.URLParam(r, "owner"),
-		RepoName:  chi.URLParam(r, "repo"),
+		s.renderUIPage(w, uiPageData{Title: title})
 	})
 }
 
@@ -92,46 +98,20 @@ func (s *Server) requireAppSession(next http.Handler) http.Handler {
 }
 
 func (s *Server) renderUIPage(w http.ResponseWriter, data uiPageData) {
+	if data.Bootstrap == "" {
+		data.Bootstrap = uiBootstrap
+	}
+	if data.EntryScript == "" {
+		data.EntryScript = uiBundle.EntryScript
+	}
+	if len(data.Stylesheets) == 0 {
+		data.Stylesheets = uiBundle.Stylesheets
+	}
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := uiPageTemplate.Execute(w, data); err != nil {
 		s.logger.Error("render ui page", "error", err)
 	}
-}
-
-func (s *Server) cloneURLs(owner, repo string) (string, string) {
-	baseURL := strings.TrimSuffix(s.cfg.BaseURL, "/")
-	httpCloneURL := baseURL + "/git/" + owner + "/" + repo + ".git"
-	if !s.cfg.SSHEnabled {
-		return httpCloneURL, ""
-	}
-
-	parsedBaseURL, err := url.Parse(s.cfg.BaseURL)
-	if err != nil {
-		return httpCloneURL, ""
-	}
-
-	sshHost := parsedBaseURL.Hostname()
-	if sshHost == "" {
-		sshHost = "localhost"
-	}
-
-	sshPort := ""
-	if host, port, err := net.SplitHostPort(s.cfg.SSHAddress); err == nil {
-		if host != "" && host != "0.0.0.0" && host != "::" {
-			sshHost = host
-		}
-		sshPort = port
-	} else if s.cfg.SSHAddress != "" && !strings.HasPrefix(s.cfg.SSHAddress, ":") {
-		sshHost = s.cfg.SSHAddress
-	}
-
-	sshCloneURL := "ssh://" + s.cfg.SSHUser + "@" + sshHost
-	if sshPort != "" {
-		sshCloneURL += ":" + sshPort
-	}
-	sshCloneURL += "/" + owner + "/" + repo + ".git"
-
-	return httpCloneURL, sshCloneURL
 }
 
 func mustSubFS(root fs.FS, dir string) fs.FS {
@@ -140,4 +120,84 @@ func mustSubFS(root fs.FS, dir string) fs.FS {
 		panic(err)
 	}
 	return sub
+}
+
+func mustMarshalUIBootstrap(payload any) template.JS {
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		panic(err)
+	}
+	return template.JS(encoded)
+}
+
+func mustLoadUIBundle(root fs.FS) uiBundleAssets {
+	manifestBytes, err := fs.ReadFile(root, "manifest.json")
+	if err != nil {
+		panic(fmt.Sprintf("read vite manifest: %v", err))
+	}
+
+	var manifest map[string]uiManifestEntry
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		panic(fmt.Sprintf("decode vite manifest: %v", err))
+	}
+
+	for _, key := range []string{"index.html", "src/main.ts"} {
+		entry, ok := manifest[key]
+		if !ok || !entry.IsEntry || entry.File == "" {
+			continue
+		}
+
+		return uiBundleAssets{
+			EntryScript: entry.File,
+			Stylesheets: resolveManifestStylesheets(manifest, entry),
+		}
+	}
+
+	for _, entry := range manifest {
+		if !entry.IsEntry || entry.File == "" {
+			continue
+		}
+		return uiBundleAssets{
+			EntryScript: entry.File,
+			Stylesheets: resolveManifestStylesheets(manifest, entry),
+		}
+	}
+
+	panic("vite manifest did not contain an entry asset")
+}
+
+func resolveManifestStylesheets(manifest map[string]uiManifestEntry, entry uiManifestEntry) []string {
+	if len(entry.CSS) > 0 {
+		stylesheets := slices.Clone(entry.CSS)
+		slices.Sort(stylesheets)
+		return stylesheets
+	}
+
+	var stylesheets []string
+	for _, candidate := range manifest {
+		if candidate.File == "" || path.Ext(candidate.File) != ".css" {
+			continue
+		}
+		stylesheets = append(stylesheets, candidate.File)
+	}
+	slices.Sort(stylesheets)
+	return stylesheets
+}
+
+var hashedAssetPattern = regexp.MustCompile(`-[A-Za-z0-9_-]{6,}\.`)
+
+func uiAssetCacheControl(name string) string {
+	base := path.Base(name)
+	if hashedAssetPattern.MatchString(base) {
+		return "public, max-age=31536000, immutable"
+	}
+	return "no-cache"
+}
+
+func (s *Server) handleUIAssets() http.Handler {
+	fileServer := http.StripPrefix("/app/assets/", http.FileServer(http.FS(uiStaticFS)))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", uiAssetCacheControl(path.Base(r.URL.Path)))
+		fileServer.ServeHTTP(w, r)
+	})
 }

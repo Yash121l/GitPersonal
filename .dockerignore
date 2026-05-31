@@ -4,4 +4,10 @@ bin
 dist
 tmp
 coverage.out
-
+frontend/node_modules
+frontend/dist
+frontend/dist-ssr
+frontend/coverage
+frontend/.eslintcache
+frontend/.vscode
+internal/server/ui/dist

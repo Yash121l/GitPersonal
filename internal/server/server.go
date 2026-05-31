@@ -112,6 +112,21 @@ type repositoryDetailResponse struct {
 	SSHCloneURL  string           `json:"ssh_clone_url,omitempty"`
 }
 
+type repositoryBranchListResponse struct {
+	Branches []repository.Branch `json:"branches"`
+}
+
+type repositoryTreeResponse struct {
+	Ref     string                 `json:"ref"`
+	Path    string                 `json:"path"`
+	Entries []repository.TreeEntry `json:"entries"`
+}
+
+type repositoryBlobResponse struct {
+	Ref  string          `json:"ref"`
+	Blob repository.Blob `json:"blob"`
+}
+
 type repositoryWebhookListResponse struct {
 	Webhooks []store.RepositoryWebhook `json:"webhooks"`
 }
@@ -144,13 +159,10 @@ func (s *Server) routes() http.Handler {
 	r.Get("/readyz", s.handleReadyz)
 	r.Get("/", s.handleAppEntry)
 	r.Get("/app", s.handleAppEntry)
-	r.Get("/app/login", s.handleUIPage("Forge | Sign In", "login").ServeHTTP)
-	r.Get("/app/register", s.handleUIPage("Forge | Create Account", "register").ServeHTTP)
-	r.With(s.requireAppSession).Get("/app/repos", s.handleUIPage("Forge | Repositories", "repos").ServeHTTP)
-	r.With(s.requireAppSession).Get("/app/orgs", s.handleUIPage("Forge | Organizations", "orgs").ServeHTTP)
-	r.With(s.requireAppSession).Get("/app/keys", s.handleUIPage("Forge | SSH Keys", "keys").ServeHTTP)
-	r.With(s.requireAppSession).Get("/app/repos/{owner}/{repo}", s.handleUIRepositoryPage)
-	r.Handle("/app/assets/*", http.StripPrefix("/app/assets/", http.FileServer(http.FS(uiStaticFS))))
+	r.Handle("/app/assets/*", s.handleUIAssets())
+	r.Get("/app/login", s.handleUIPage("Forge | Sign In").ServeHTTP)
+	r.Get("/app/register", s.handleUIPage("Forge | Create Account").ServeHTTP)
+	r.With(s.requireAppSession).Get("/app/*", s.handleUIPage("Forge").ServeHTTP)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Route("/auth", func(r chi.Router) {
@@ -169,6 +181,9 @@ func (s *Server) routes() http.Handler {
 
 		r.With(s.requireAuth).Get("/repos", s.handleListRepositories)
 		r.With(s.requireAuth).Get("/repos/{owner}/{repo}", s.handleGetRepository)
+		r.With(s.requireAuth).Get("/repos/{owner}/{repo}/branches", s.handleListRepositoryBranches)
+		r.With(s.requireAuth).Get("/repos/{owner}/{repo}/tree", s.handleGetRepositoryTree)
+		r.With(s.requireAuth).Get("/repos/{owner}/{repo}/blob", s.handleGetRepositoryBlob)
 		r.With(s.requireAuth).Post("/repos", s.handleCreateRepository)
 		r.With(s.requireAuth).Delete("/repos/{owner}/{repo}", s.handleDeleteRepository)
 		r.With(s.requireAuth).Post("/repos/{owner}/{repo}/collaborators", s.handleAddRepositoryCollaborator)
@@ -331,6 +346,9 @@ func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) 
 		s.writeError(r, w, http.StatusInternalServerError, errors.New("failed to list repositories"))
 		return
 	}
+	if repositories == nil {
+		repositories = []store.Repository{}
+	}
 
 	s.writeJSON(w, http.StatusOK, repoListResponse{Repositories: repositories})
 }
@@ -368,6 +386,91 @@ func (s *Server) handleGetRepository(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleListRepositoryBranches(w http.ResponseWriter, r *http.Request) {
+	_, repoMeta, ok := s.authorizeRepositoryRead(w, r)
+	if !ok {
+		return
+	}
+
+	branches, err := s.repositories.ListBranches(r.Context(), repoMeta)
+	if err != nil {
+		s.logger.Error("list repository branches", "error", err, "owner", repoMeta.Owner, "repo", repoMeta.Name)
+		s.writeError(r, w, http.StatusInternalServerError, errors.New("failed to list repository branches"))
+		return
+	}
+	if branches == nil {
+		branches = []repository.Branch{}
+	}
+
+	s.writeJSON(w, http.StatusOK, repositoryBranchListResponse{Branches: branches})
+}
+
+func (s *Server) handleGetRepositoryTree(w http.ResponseWriter, r *http.Request) {
+	_, repoMeta, ok := s.authorizeRepositoryRead(w, r)
+	if !ok {
+		return
+	}
+
+	ref := strings.TrimSpace(r.URL.Query().Get("ref"))
+	treePath := strings.TrimSpace(r.URL.Query().Get("path"))
+	entries, err := s.repositories.ListTree(r.Context(), repoMeta, ref, treePath)
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			status = http.StatusNotFound
+		case errors.Is(err, store.ErrInvalidArgument):
+			status = http.StatusBadRequest
+		}
+		s.writeError(r, w, status, err)
+		return
+	}
+
+	if ref == "" {
+		ref = repoMeta.DefaultBranch
+	}
+	if entries == nil {
+		entries = []repository.TreeEntry{}
+	}
+	s.writeJSON(w, http.StatusOK, repositoryTreeResponse{
+		Ref:     ref,
+		Path:    treePath,
+		Entries: entries,
+	})
+}
+
+func (s *Server) handleGetRepositoryBlob(w http.ResponseWriter, r *http.Request) {
+	_, repoMeta, ok := s.authorizeRepositoryRead(w, r)
+	if !ok {
+		return
+	}
+
+	ref := strings.TrimSpace(r.URL.Query().Get("ref"))
+	blobPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	if blobPath == "" {
+		s.writeError(r, w, http.StatusBadRequest, errors.New("blob path is required"))
+		return
+	}
+
+	blob, err := s.repositories.ReadBlob(r.Context(), repoMeta, ref, blobPath)
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			status = http.StatusNotFound
+		case errors.Is(err, store.ErrInvalidArgument):
+			status = http.StatusBadRequest
+		}
+		s.writeError(r, w, status, err)
+		return
+	}
+
+	if ref == "" {
+		ref = repoMeta.DefaultBranch
+	}
+	s.writeJSON(w, http.StatusOK, repositoryBlobResponse{Ref: ref, Blob: blob})
+}
+
 func (s *Server) handleListOrganizations(w http.ResponseWriter, r *http.Request) {
 	user, ok := userFromContext(r.Context())
 	if !ok {
@@ -380,6 +483,9 @@ func (s *Server) handleListOrganizations(w http.ResponseWriter, r *http.Request)
 		s.logger.Error("list organizations", "error", err, "user_id", user.ID)
 		s.writeError(r, w, http.StatusInternalServerError, errors.New("failed to list organizations"))
 		return
+	}
+	if organizations == nil {
+		organizations = []store.OrganizationMembership{}
 	}
 
 	s.writeJSON(w, http.StatusOK, organizationListResponse{Organizations: organizations})
@@ -688,6 +794,9 @@ func (s *Server) handleListRepositoryWebhooks(w http.ResponseWriter, r *http.Req
 		s.writeError(r, w, status, err)
 		return
 	}
+	if webhooks == nil {
+		webhooks = []store.RepositoryWebhook{}
+	}
 
 	s.writeJSON(w, http.StatusOK, repositoryWebhookListResponse{Webhooks: webhooks})
 }
@@ -847,6 +956,9 @@ func (s *Server) handleListSSHKeys(w http.ResponseWriter, r *http.Request) {
 		s.writeError(r, w, http.StatusInternalServerError, errors.New("failed to list ssh keys"))
 		return
 	}
+	if keys == nil {
+		keys = []store.SSHKey{}
+	}
 
 	s.writeJSON(w, http.StatusOK, sshKeyListResponse{Keys: keys})
 }
@@ -863,6 +975,34 @@ func validateWebhookURL(raw string) error {
 		return errors.New("webhook url must include a host")
 	}
 	return nil
+}
+
+func (s *Server) authorizeRepositoryRead(w http.ResponseWriter, r *http.Request) (store.User, store.Repository, bool) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		s.writeError(r, w, http.StatusUnauthorized, errors.New("authentication required"))
+		return store.User{}, store.Repository{}, false
+	}
+
+	owner := chi.URLParam(r, "owner")
+	repoName := chi.URLParam(r, "repo")
+	repositoryMeta, err := s.repositories.GetRepository(r.Context(), owner, repoName)
+	if err != nil {
+		s.writeError(r, w, http.StatusNotFound, errors.New("repository not found"))
+		return store.User{}, store.Repository{}, false
+	}
+
+	canRead, err := s.repositories.CanRead(r.Context(), &user, repositoryMeta)
+	if err != nil {
+		s.writeError(r, w, http.StatusInternalServerError, errors.New("failed to authorize repository access"))
+		return store.User{}, store.Repository{}, false
+	}
+	if !canRead {
+		s.writeError(r, w, http.StatusForbidden, errors.New("repository read access required"))
+		return store.User{}, store.Repository{}, false
+	}
+
+	return user, repositoryMeta, true
 }
 
 func (s *Server) requireAuth(next http.Handler) http.Handler {

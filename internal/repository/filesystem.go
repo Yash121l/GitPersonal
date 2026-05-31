@@ -1,11 +1,13 @@
 package repository
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -216,7 +218,48 @@ func (p *FilesystemProvisioner) runGit(ctx context.Context, args ...string) (str
 	return string(output), err
 }
 
+func (p *FilesystemProvisioner) runGitLimited(ctx context.Context, limit int64, args ...string) ([]byte, bool, string, error) {
+	command := exec.CommandContext(ctx, p.gitBin, args...)
+
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return nil, false, "", err
+	}
+	if err := command.Start(); err != nil {
+		return nil, false, "", err
+	}
+
+	readLimit := limit + 1
+	if limit < 0 {
+		readLimit = 0
+	}
+	output, err := io.ReadAll(io.LimitReader(stdout, readLimit))
+	if err != nil {
+		_ = command.Wait()
+		return nil, false, stderr.String(), err
+	}
+
+	truncated := limit >= 0 && int64(len(output)) > limit
+	if truncated {
+		output = output[:limit]
+		_, _ = io.Copy(io.Discard, stdout)
+	}
+
+	if err := command.Wait(); err != nil {
+		return output, truncated, stderr.String(), err
+	}
+	return output, truncated, stderr.String(), nil
+}
+
 func (p *FilesystemProvisioner) RunGit(ctx context.Context, repoPath string, args ...string) (string, error) {
 	commandArgs := append([]string{"--git-dir", repoPath}, args...)
 	return p.runGit(ctx, commandArgs...)
+}
+
+func (p *FilesystemProvisioner) RunGitLimited(ctx context.Context, repoPath string, limit int64, args ...string) ([]byte, bool, string, error) {
+	commandArgs := append([]string{"--git-dir", repoPath}, args...)
+	return p.runGitLimited(ctx, limit, commandArgs...)
 }
