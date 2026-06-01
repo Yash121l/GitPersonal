@@ -7,7 +7,7 @@ export const defaultFeatureFlags = {
   repositoryAccess: true,
   repositoryAutomation: true,
   repositoryActivity: true,
-  repositorySettings: false,
+  repositorySettings: true,
 } as const
 
 export type FeatureFlag = keyof typeof defaultFeatureFlags
@@ -71,7 +71,7 @@ export const featureCatalog: Record<FeatureFlag, FeatureDefinition> = {
   repositorySettings: {
     key: 'repositorySettings',
     label: 'Settings',
-    description: 'Reserved slot for future repository configuration surfaces.',
+    description: 'Repository configuration and access guardrails.',
     scope: 'repository',
   },
 }

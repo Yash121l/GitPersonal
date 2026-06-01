@@ -12,16 +12,16 @@ const lines = computed(() => (props.blob?.content ? props.blob.content.split('\n
 </script>
 
 <template>
-  <div v-if="!blob" class="rounded-2xl border border-dashed border-zinc-800 bg-zinc-950/70 p-8 text-center">
+  <div v-if="!blob" class="rounded-xl border border-dashed border-zinc-800 bg-zinc-950 p-8 text-center">
     <p class="eyebrow">Code Preview</p>
     <h3 class="mt-2 text-lg font-semibold text-zinc-100">Select a file from the tree.</h3>
-    <p class="mt-2 text-sm text-zinc-400">
+    <p class="mx-auto mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
       Forge only loads the current tree level and the selected blob preview, which keeps navigation responsive for larger repositories.
     </p>
   </div>
 
-  <div v-else class="overflow-hidden rounded-2xl border border-zinc-800 bg-black/70 text-zinc-100 shadow-[0_20px_70px_rgba(0,0,0,0.45)]">
-    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 bg-zinc-950/80 px-5 py-4">
+  <div v-else class="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 text-zinc-100 shadow-sm">
+    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 bg-zinc-950 px-5 py-4">
       <div>
         <p class="text-sm font-semibold">{{ blob.path }}</p>
         <p class="text-xs text-zinc-500">{{ formatBytes(blob.size_bytes) }} · {{ blob.language }}</p>
@@ -34,13 +34,13 @@ const lines = computed(() => (props.blob?.content ? props.blob.content.split('\n
     <div v-if="blob.is_binary" class="p-8">
       <p class="eyebrow text-zinc-500">Binary Asset</p>
       <h3 class="mt-2 text-lg font-semibold text-white">This file is not rendered inline.</h3>
-      <p class="mt-2 max-w-2xl text-sm text-zinc-400">
+      <p class="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
         Binary files are detected server-side so the browser view stays fast and avoids dumping unreadable data into the DOM.
       </p>
     </div>
 
     <div v-else class="grid max-h-[40rem] grid-cols-[auto_1fr] overflow-auto scrollbar-subtle text-sm">
-      <div class="select-none border-r border-zinc-800 bg-zinc-950/80 px-4 py-4 text-right text-zinc-600">
+      <div class="select-none border-r border-zinc-800 bg-zinc-950 px-4 py-4 text-right text-zinc-600">
         <div v-for="(_, index) in lines" :key="index" class="h-6 leading-6">
           {{ index + 1 }}
         </div>

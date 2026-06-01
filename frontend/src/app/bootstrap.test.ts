@@ -26,6 +26,6 @@ describe('resolveBootstrap', () => {
     expect(resolved.basePath).toBe('/app/')
     expect(resolved.productName).toBe('Forge')
     expect(resolved.features.workspaceOverview).toBe(true)
-    expect(resolved.features.repositorySettings).toBe(false)
+    expect(resolved.features.repositorySettings).toBe(true)
   })
 })

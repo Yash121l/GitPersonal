@@ -1,0 +1,1 @@
+import{J as e,Q as t,kt as n,nt as r,st as i}from"./index-BdEVpKxP.js";import{n as a}from"./utils-tg9760dR.js";var o=r({name:`UiSkeleton`,__name:`Skeleton`,props:{class:{}},setup(r){let o=r,s=e(()=>a(`animate-pulse rounded-md bg-zinc-900`,o.class));return(e,r)=>(i(),t(`div`,{class:n(s.value)},null,2))}});export{o as t};

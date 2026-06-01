@@ -162,6 +162,7 @@ func (s *Server) routes() http.Handler {
 	r.Handle("/app/assets/*", s.handleUIAssets())
 	r.Get("/app/login", s.handleUIPage("Forge | Sign In").ServeHTTP)
 	r.Get("/app/register", s.handleUIPage("Forge | Create Account").ServeHTTP)
+	r.Get("/app/signup", s.handleUIPage("Forge | Create Account").ServeHTTP)
 	r.With(s.requireAppSession).Get("/app/*", s.handleUIPage("Forge").ServeHTTP)
 
 	r.Route("/api/v1", func(r chi.Router) {

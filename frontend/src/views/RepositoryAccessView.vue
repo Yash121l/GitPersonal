@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useMutation } from '@tanstack/vue-query'
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 
 import PageHeader from '@/components/app/PageHeader.vue'
 import Badge from '@/components/ui/Badge.vue'
@@ -19,6 +19,10 @@ const collaboratorForm = reactive({
 })
 const errorMessage = ref('')
 const successMessage = ref('')
+const submitAttempted = ref(false)
+const usernameError = computed(() =>
+  submitAttempted.value && collaboratorForm.username.trim() === '' ? 'Username is required.' : '',
+)
 
 const addCollaborator = useMutation({
   mutationFn: (payload: { username: string; role: string }) =>
@@ -26,14 +30,19 @@ const addCollaborator = useMutation({
   onSuccess: () => {
     collaboratorForm.username = ''
     collaboratorForm.role = 'read'
+    submitAttempted.value = false
     errorMessage.value = ''
     successMessage.value = 'Collaborator invitation saved.'
   },
 })
 
 async function handleAddCollaborator() {
+  submitAttempted.value = true
   errorMessage.value = ''
   successMessage.value = ''
+  if (collaboratorForm.username.trim() === '') {
+    return
+  }
 
   try {
     await addCollaborator.mutateAsync({
@@ -114,6 +123,7 @@ async function handleAddCollaborator() {
             <div>
               <label class="field-label">Username</label>
               <Input v-model="collaboratorForm.username" placeholder="teammate" />
+              <p v-if="usernameError" class="mt-1 text-xs text-red-400">{{ usernameError }}</p>
             </div>
             <div>
               <label class="field-label">Role</label>

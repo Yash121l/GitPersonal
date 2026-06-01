@@ -21,6 +21,21 @@ const webhookForm = reactive({
   event: 'repository.push',
 })
 const errorMessage = ref('')
+const submitAttempted = ref(false)
+const urlError = computed(() => {
+  if (!submitAttempted.value) {
+    return ''
+  }
+  if (webhookForm.url.trim() === '') {
+    return 'Endpoint URL is required.'
+  }
+  try {
+    new URL(webhookForm.url.trim())
+    return ''
+  } catch {
+    return 'Enter a valid URL.'
+  }
+})
 
 const webhooksQuery = useQuery({
   queryKey: ['webhooks', workspace.owner, workspace.repo],
@@ -48,6 +63,7 @@ const createWebhook = useMutation({
     webhookForm.url = ''
     webhookForm.secret = ''
     webhookForm.event = 'repository.push'
+    submitAttempted.value = false
     errorMessage.value = ''
     await queryClient.invalidateQueries({ queryKey: ['webhooks', workspace.owner, workspace.repo] })
   },
@@ -61,7 +77,11 @@ const deleteWebhook = useMutation({
 })
 
 async function handleCreateWebhook() {
+  submitAttempted.value = true
   errorMessage.value = ''
+  if (urlError.value) {
+    return
+  }
   try {
     await createWebhook.mutateAsync({
       url: webhookForm.url.trim(),
@@ -109,6 +129,7 @@ async function handleDeleteWebhook(webhookId: number) {
           <div>
             <label class="field-label">Endpoint URL</label>
             <Input v-model="webhookForm.url" placeholder="https://example.com/hooks/forge" />
+            <p v-if="urlError" class="mt-1 text-xs text-red-400">{{ urlError }}</p>
           </div>
           <div>
             <label class="field-label">Signing Secret</label>

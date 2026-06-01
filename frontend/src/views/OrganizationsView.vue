@@ -19,12 +19,12 @@ const organizationsQuery = useQuery({
   queryFn: () => api.listOrganizations(),
 })
 
-const memberForms = reactive<Record<string, { username: string; role: string }>>({})
+const memberForms = reactive<Record<string, { username: string; role: string; attempted: boolean }>>({})
 const errorMessage = ref('')
 
 function formFor(slug: string) {
   if (!memberForms[slug]) {
-    memberForms[slug] = { username: '', role: 'member' }
+    memberForms[slug] = { username: '', role: 'member', attempted: false }
   }
   return memberForms[slug]
 }
@@ -35,6 +35,7 @@ const addMember = useMutation({
   onSuccess: async (_, variables) => {
     formFor(variables.slug).username = ''
     formFor(variables.slug).role = 'member'
+    formFor(variables.slug).attempted = false
     errorMessage.value = ''
     await queryClient.invalidateQueries({ queryKey: ['organizations'] })
   },
@@ -42,9 +43,19 @@ const addMember = useMutation({
 
 const organizations = computed(() => organizationsQuery.data.value ?? [])
 
+function usernameError(slug: string) {
+  const form = formFor(slug)
+  return form.attempted && form.username.trim() === '' ? 'Username is required.' : ''
+}
+
 async function handleAddMember(slug: string) {
   const form = formFor(slug)
+  form.attempted = true
   errorMessage.value = ''
+  if (form.username.trim() === '') {
+    return
+  }
+
   try {
     await addMember.mutateAsync({
       slug,
@@ -73,7 +84,7 @@ async function handleAddMember(slug: string) {
       empty-description="Create an organization from the repositories screen, or wait to be invited into a shared namespace."
     >
       <template #loading>
-        <CardSkeletonGrid :count="4" wrapper-class="grid gap-3 xl:grid-cols-2" item-class="h-48" />
+        <CardSkeletonGrid :count="4" wrapper-class="grid gap-6 xl:grid-cols-2" item-class="h-48" />
       </template>
 
       <template #empty>
@@ -84,17 +95,16 @@ async function handleAddMember(slug: string) {
         />
       </template>
 
-      <div class="grid gap-3 xl:grid-cols-2">
-        <Card v-for="organization in organizations" :key="organization.organization_slug" class="space-y-4">
+      <div class="grid gap-6 xl:grid-cols-2">
+        <Card v-for="organization in organizations" :key="organization.organization_slug" class="space-y-5">
           <div class="flex flex-wrap items-center gap-2">
             <Badge variant="accent">{{ organization.role }}</Badge>
             <Badge>{{ organization.organization_slug }}</Badge>
           </div>
-          <div>
-            <h3 class="text-lg font-semibold text-zinc-50">
-              {{ organization.organization_display_name }}
-            </h3>
-            <p class="mt-2 text-sm text-zinc-400">
+
+          <div class="space-y-2">
+            <h3 class="text-lg font-semibold text-zinc-50">{{ organization.organization_display_name }}</h3>
+            <p class="text-sm leading-6 text-zinc-400">
               Add members and assign their role in this organization.
             </p>
           </div>
@@ -102,7 +112,10 @@ async function handleAddMember(slug: string) {
           <div class="grid gap-4 md:grid-cols-[1fr_160px_140px]">
             <div>
               <label class="field-label">Username</label>
-              <Input v-model="formFor(organization.organization_slug).username" />
+              <Input v-model="formFor(organization.organization_slug).username" placeholder="teammate" />
+              <p v-if="usernameError(organization.organization_slug)" class="mt-1 text-xs text-red-400">
+                {{ usernameError(organization.organization_slug) }}
+              </p>
             </div>
             <div>
               <label class="field-label">Role</label>
@@ -122,10 +135,7 @@ async function handleAddMember(slug: string) {
       </div>
     </ViewState>
 
-    <div
-      v-if="errorMessage"
-      class="rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300"
-    >
+    <div v-if="errorMessage" class="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
       {{ errorMessage }}
     </div>
   </div>

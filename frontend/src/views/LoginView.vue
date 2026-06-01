@@ -16,14 +16,24 @@ const username = ref('')
 const password = ref('')
 const errorMessage = ref('')
 const loading = ref(false)
+const attempted = ref(false)
 
 const redirectTarget = computed<RouteLocationRaw>(() => {
   const redirect = route.query.redirect
   return typeof redirect === 'string' && redirect.startsWith('/') ? redirect : getDefaultWorkspaceRoute()
 })
 
+const usernameError = computed(() => (attempted.value && username.value.trim() === '' ? 'Username is required.' : ''))
+const passwordError = computed(() => (attempted.value && password.value === '' ? 'Password is required.' : ''))
+const formValid = computed(() => username.value.trim() !== '' && password.value !== '')
+
 async function handleSubmit() {
+  attempted.value = true
   errorMessage.value = ''
+  if (!formValid.value) {
+    return
+  }
+
   loading.value = true
   try {
     await authStore.login({
@@ -41,71 +51,75 @@ async function handleSubmit() {
 
 <template>
   <div class="page-shell">
-    <div class="mx-auto grid min-h-[calc(100vh-3rem)] max-w-6xl items-center gap-8 lg:grid-cols-[1.08fr_0.92fr]">
-      <div class="space-y-6">
-        <p class="eyebrow">Developer Workspace</p>
-        <h1 class="max-w-4xl text-5xl font-semibold leading-tight tracking-tight text-zinc-50">
-          Self-hosted Git with a control surface built for engineers.
-        </h1>
-        <p class="max-w-2xl text-base leading-7 text-zinc-400">
-          Dark, dense, and operational by default: repository inventory, SSH identity, org access, browser code navigation, and webhook administration without leaving the same workspace.
-        </p>
-        <div class="grid gap-4 md:grid-cols-3">
-          <Card class="border-sky-500/20 bg-sky-500/5">
-            <p class="eyebrow text-sky-400">Transport</p>
-            <h2 class="mt-2 text-xl font-semibold">HTTP + SSH</h2>
-            <p class="mt-2 text-sm text-zinc-400">One identity model across the API, the browser, Smart HTTP, and SSH Git.</p>
-          </Card>
-          <Card>
-            <p class="eyebrow">Repository UI</p>
-            <h2 class="mt-2 text-xl font-semibold text-zinc-50">Tree + Blob</h2>
-            <p class="mt-2 text-sm text-zinc-400">Branch-aware browsing with bounded previews and virtualized trees for deeper repos.</p>
-          </Card>
-          <Card>
-            <p class="eyebrow">Operations</p>
-            <h2 class="mt-2 text-xl font-semibold text-zinc-50">Automation</h2>
-            <p class="mt-2 text-sm text-zinc-400">Signed webhook delivery and repo administration from the same dark control plane.</p>
-          </Card>
+    <div class="mx-auto grid min-h-[calc(100vh-2rem)] max-w-5xl items-center gap-12 lg:grid-cols-[1fr_420px]">
+      <div class="space-y-8">
+        <div class="flex items-center gap-3">
+          <div class="flex size-9 items-center justify-center rounded-md border border-zinc-800 bg-zinc-900 text-sm font-semibold text-zinc-100">
+            F
+          </div>
+          <div>
+            <p class="text-sm font-medium text-zinc-50">Forge</p>
+            <p class="text-xs text-zinc-500">Self-hosted Git workspace</p>
+          </div>
         </div>
 
-        <div class="terminal-panel overflow-hidden">
-          <div class="flex items-center gap-2 border-b border-zinc-800 px-4 py-3">
-            <span class="size-2 rounded-full bg-red-400/80" />
-            <span class="size-2 rounded-full bg-amber-400/80" />
-            <span class="size-2 rounded-full bg-emerald-400/80" />
-            <span class="ml-2 text-xs text-zinc-500">forge status</span>
+        <div class="space-y-4">
+          <p class="eyebrow">Sign In</p>
+          <h1 class="max-w-3xl text-4xl font-semibold tracking-tight text-zinc-50 md:text-5xl">
+            Self-hosted Git, simpler to operate.
+          </h1>
+          <p class="max-w-2xl text-base leading-7 text-zinc-400">
+            Repositories, organizations, SSH keys, and repository modules in a layout built to be easy to scan and easy to navigate.
+          </p>
+        </div>
+
+        <div class="space-y-4 border-t border-zinc-800 pt-6">
+          <div class="flex items-start gap-3">
+            <div class="mt-1 size-2 rounded-full bg-zinc-500" />
+            <div>
+              <p class="text-sm font-medium text-zinc-100">Repository-first navigation</p>
+              <p class="text-sm text-zinc-500">Jump from the workspace to code, access, automation, and activity without fighting the layout.</p>
+            </div>
           </div>
-          <div class="space-y-2 px-4 py-4 font-mono text-xs text-zinc-400">
-            <p><span class="text-emerald-400">$</span> forge status --scope browser</p>
-            <p class="text-zinc-500">ui.shell = ready</p>
-            <p class="text-zinc-500">repo.browser = virtualized</p>
-            <p class="text-zinc-500">auth.model = shared(http, ssh, api)</p>
-            <p class="text-zinc-500">theme = dark developer console</p>
+          <div class="flex items-start gap-3">
+            <div class="mt-1 size-2 rounded-full bg-zinc-500" />
+            <div>
+              <p class="text-sm font-medium text-zinc-100">Shared identity model</p>
+              <p class="text-sm text-zinc-500">The same account covers the browser, API calls, Git HTTP, and SSH keys.</p>
+            </div>
+          </div>
+          <div class="flex items-start gap-3">
+            <div class="mt-1 size-2 rounded-full bg-zinc-500" />
+            <div>
+              <p class="text-sm font-medium text-zinc-100">Shadcn-style baseline</p>
+              <p class="text-sm text-zinc-500">Simple cards, normal radii, and restrained spacing across the whole UI.</p>
+            </div>
           </div>
         </div>
       </div>
 
-      <Card class="p-8">
-        <p class="eyebrow">Sign In</p>
-        <h2 class="mt-2 text-3xl font-semibold text-zinc-50">Open your Forge workspace.</h2>
-        <p class="mt-3 text-sm leading-6 text-zinc-400">
-          Use the same account that authorizes API calls, Git pushes, and SSH keys.
-        </p>
+      <Card class="p-6 md:p-8">
+        <div class="space-y-2">
+          <p class="eyebrow">Account</p>
+          <h2 class="text-2xl font-semibold text-zinc-50">Open your workspace</h2>
+          <p class="text-sm leading-6 text-zinc-400">
+            Use the same account that authorizes API calls, Git pushes, and SSH keys.
+          </p>
+        </div>
 
-        <form class="mt-8 space-y-5" @submit.prevent="handleSubmit">
+        <form class="mt-6 space-y-5" @submit.prevent="handleSubmit">
           <div>
             <label class="field-label" for="login-username">Username</label>
-            <Input id="login-username" v-model="username" autocomplete="username" required />
+            <Input id="login-username" v-model="username" autocomplete="username" placeholder="yash" required />
+            <p v-if="usernameError" class="mt-1 text-xs text-red-400">{{ usernameError }}</p>
           </div>
           <div>
             <label class="field-label" for="login-password">Password</label>
             <Input id="login-password" v-model="password" type="password" autocomplete="current-password" required />
+            <p v-if="passwordError" class="mt-1 text-xs text-red-400">{{ passwordError }}</p>
           </div>
 
-          <div
-            v-if="errorMessage"
-            class="rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300"
-          >
+          <div v-if="errorMessage" class="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
             {{ errorMessage }}
           </div>
 

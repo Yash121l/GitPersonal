@@ -97,10 +97,10 @@ watch(
       </template>
     </PageHeader>
 
-    <div class="grid gap-3 2xl:grid-cols-[320px_minmax(0,1fr)_300px]">
+    <div class="grid gap-6 2xl:grid-cols-[300px_minmax(0,1fr)_280px]">
       <Card class="space-y-4">
-        <div class="flex items-end gap-3">
-          <div class="min-w-0 flex-1">
+        <div class="grid gap-4">
+          <div>
             <label class="field-label">Branch</label>
             <Select v-model="branchModel">
               <option v-for="branch in workspace.branchesQuery.data.value ?? []" :key="branch.name" :value="branch.name">
@@ -108,16 +108,16 @@ watch(
               </option>
             </Select>
           </div>
-          <div class="min-w-0 flex-1">
+          <div>
             <label class="field-label">Filter current tree</label>
             <Input v-model="treeFilter" placeholder="Search files or folders" />
           </div>
         </div>
 
-        <div class="flex flex-wrap items-center gap-2 text-sm text-zinc-400">
+        <div class="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            class="rounded-md border border-zinc-800 bg-zinc-900 px-3 py-1 hover:bg-zinc-800"
+            class="rounded-md border border-zinc-800 px-3 py-1 text-sm text-zinc-300 transition hover:bg-zinc-900 hover:text-zinc-100"
             @click="workspace.openDirectory('')"
           >
             root
@@ -126,7 +126,7 @@ watch(
             v-for="crumb in breadcrumbs"
             :key="crumb.value"
             type="button"
-            class="rounded-md border border-zinc-800 bg-zinc-900 px-3 py-1 hover:bg-zinc-800"
+            class="rounded-md border border-zinc-800 px-3 py-1 text-sm text-zinc-300 transition hover:bg-zinc-900 hover:text-zinc-100"
             @click="workspace.openDirectory(crumb.value)"
           >
             {{ crumb.label }}
@@ -134,7 +134,7 @@ watch(
         </div>
 
         <div v-if="treeQuery.isLoading.value" class="space-y-3">
-          <div v-for="index in 6" :key="index" class="h-12 animate-pulse rounded-xl bg-zinc-900" />
+          <div v-for="index in 6" :key="index" class="h-12 animate-pulse rounded-md bg-zinc-900" />
         </div>
         <EmptyState
           v-else-if="treeErrorMessage"
@@ -156,14 +156,14 @@ watch(
         />
       </Card>
 
-      <div v-if="blobErrorMessage" class="rounded-2xl border border-red-500/30 bg-red-500/10 p-8">
+      <div v-if="blobErrorMessage" class="rounded-xl border border-red-500/30 bg-red-500/10 p-8">
         <p class="eyebrow text-red-300">Preview Error</p>
         <h3 class="mt-2 text-lg font-semibold text-red-100">The selected file could not be rendered.</h3>
         <p class="mt-2 text-sm leading-6 text-red-200/80">
           {{ blobErrorMessage }}
         </p>
       </div>
-      <div v-else-if="blobQuery.isLoading.value && selectedFile" class="space-y-3 rounded-2xl border border-zinc-800 bg-black/70 p-5">
+      <div v-else-if="blobQuery.isLoading.value && selectedFile" class="space-y-3 rounded-xl border border-zinc-800 bg-zinc-950 p-5">
         <div class="flex items-center justify-between gap-3 border-b border-zinc-800 pb-4">
           <div class="space-y-2">
             <Skeleton class="h-4 w-72" />
@@ -171,8 +171,8 @@ watch(
           </div>
           <Skeleton class="h-6 w-32" />
         </div>
-        <div class="grid overflow-hidden rounded-xl border border-zinc-800 md:grid-cols-[auto_1fr]">
-          <div class="space-y-2 border-r border-zinc-800 bg-zinc-950/80 px-4 py-4">
+        <div class="grid overflow-hidden rounded-lg border border-zinc-800 md:grid-cols-[auto_1fr]">
+          <div class="space-y-2 border-r border-zinc-800 bg-zinc-950 px-4 py-4">
             <Skeleton v-for="index in 12" :key="`line-${index}`" class="h-4 w-6" />
           </div>
           <div class="space-y-2 px-5 py-4">
@@ -182,53 +182,49 @@ watch(
       </div>
       <CodePreview v-else :blob="blobQuery.data.value?.blob ?? null" />
 
-      <div class="space-y-3">
-        <Card class="space-y-4">
-          <div class="panel-header">
-            <div>
-            <p class="eyebrow">Navigation Context</p>
-              <h3 class="mt-1 text-lg font-semibold text-zinc-50">Current selection</h3>
-            </div>
+      <Card class="space-y-6">
+        <div class="space-y-4">
+          <div>
+            <p class="eyebrow">Current Selection</p>
+            <h3 class="mt-1 text-lg font-semibold text-zinc-50">Navigation context</h3>
           </div>
-          <div class="grid gap-3 text-sm text-zinc-400">
-            <div class="rounded-lg border border-zinc-800 bg-black/30 p-3">
-              <p class="eyebrow">Selected Path</p>
+          <div class="divide-y divide-zinc-800 border-y border-zinc-800">
+            <div class="py-4 first:pt-0">
+              <p class="text-sm font-medium text-zinc-400">Selected path</p>
               <p class="mt-2 font-mono text-xs text-zinc-200">{{ selectedPath || 'root' }}</p>
             </div>
-            <div class="rounded-lg border border-zinc-800 bg-black/30 p-3">
-              <p class="eyebrow">Selected File</p>
+            <div class="py-4">
+              <p class="text-sm font-medium text-zinc-400">Selected file</p>
               <p class="mt-2 font-mono text-xs text-zinc-200">{{ selectedFile || 'No file selected' }}</p>
             </div>
-            <div class="rounded-lg border border-zinc-800 bg-black/30 p-3">
-              <p class="eyebrow">Visible Entries</p>
+            <div class="py-4 last:pb-0">
+              <p class="text-sm font-medium text-zinc-400">Visible entries</p>
               <p class="mt-2 text-2xl font-semibold text-zinc-50">{{ filteredEntries.length }}</p>
             </div>
           </div>
-        </Card>
+        </div>
 
-        <Card class="space-y-4">
-          <div class="panel-header">
-            <div>
-            <p class="eyebrow">Current Tree</p>
-              <h3 class="mt-1 text-lg font-semibold text-zinc-50">{{ selectedPath || 'root' }}</h3>
-            </div>
+        <div class="space-y-4 border-t border-zinc-800 pt-6">
+          <div>
+            <p class="eyebrow">Preview</p>
+            <h3 class="mt-1 text-lg font-semibold text-zinc-50">{{ selectedPath || 'root' }}</h3>
           </div>
-          <p class="text-sm text-zinc-400">
+          <p class="text-sm leading-6 text-zinc-400">
             {{ filteredEntries.length }} item{{ filteredEntries.length === 1 ? '' : 's' }} visible in this path.
           </p>
-          <div v-if="firstVisibleEntry" class="rounded-lg border border-zinc-800 bg-black/30 p-3 text-sm text-zinc-400">
-            Next likely file: <span class="font-semibold text-zinc-100">{{ basename(firstVisibleEntry.path) }}</span>.
+          <div v-if="firstVisibleEntry" class="rounded-md border border-zinc-800 p-4 text-sm text-zinc-400">
+            Next likely file: <span class="font-semibold text-zinc-100">{{ basename(firstVisibleEntry.path) }}</span>
           </div>
           <div
             v-if="blobQuery.data.value?.blob"
-            class="rounded-lg border border-zinc-800 bg-black/30 p-3 text-sm text-zinc-400"
+            class="rounded-md border border-zinc-800 p-4 text-sm text-zinc-400"
           >
-            <p class="eyebrow">Preview</p>
+            <p class="text-sm font-medium text-zinc-400">Rendered file</p>
             <p class="mt-2 font-mono text-xs text-zinc-200">{{ blobQuery.data.value.blob.path }}</p>
             <p class="mt-2">Rendered size: {{ formatBytes(blobQuery.data.value.blob.size_bytes) }}</p>
           </div>
-        </Card>
-      </div>
+        </div>
+      </Card>
     </div>
   </div>
 </template>

@@ -7,19 +7,19 @@ import { cn } from '@/lib/utils'
 defineOptions({ name: 'UiButton' })
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-700/80 focus-visible:ring-offset-2 focus-visible:ring-offset-[#09090b]',
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-700 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950',
   {
     variants: {
       variant: {
-        primary: 'bg-zinc-50 text-zinc-950 shadow-sm hover:bg-zinc-200',
+        primary: 'bg-zinc-50 text-zinc-950 hover:bg-zinc-200',
         secondary: 'border border-zinc-800 bg-zinc-900 text-zinc-100 hover:bg-zinc-800',
         ghost: 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100',
         danger: 'bg-red-500 text-white shadow-sm hover:bg-red-400',
       },
       size: {
         sm: 'h-8 px-3.5',
-        md: 'h-9 px-4',
-        lg: 'h-10 px-5 text-base',
+        md: 'h-10 px-4',
+        lg: 'h-11 px-5 text-base',
       },
     },
     defaultVariants: {

@@ -13,7 +13,7 @@ const props = defineProps<Props>()
 const model = defineModel<string>()
 const classes = computed(() =>
   cn(
-    'flex h-10 w-full rounded-md border border-zinc-800 bg-black/40 px-3 text-sm text-zinc-100 shadow-sm outline-none transition placeholder:text-zinc-500 focus:border-zinc-700 focus:ring-2 focus:ring-zinc-700/80',
+    'flex h-10 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-zinc-700 focus:ring-2 focus:ring-zinc-700/50',
     props.class,
   ),
 )

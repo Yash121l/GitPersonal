@@ -1,0 +1,1 @@
+import{J as e,Q as t,kt as n,nt as r,st as i,ut as a}from"./index-BdEVpKxP.js";import{n as o}from"./utils-tg9760dR.js";var s=r({name:`UiCard`,__name:`Card`,props:{class:{}},setup(r){let s=r,c=e(()=>o(`rounded-lg border border-zinc-800 bg-zinc-950 p-6 text-zinc-100 shadow-sm`,s.class));return(e,r)=>(i(),t(`section`,{class:n(c.value)},[a(e.$slots,`default`)],2))}});export{s as t};

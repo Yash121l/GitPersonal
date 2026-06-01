@@ -92,67 +92,79 @@
   }
 
   html {
-    @apply scroll-smooth;
+    @apply scroll-smooth bg-zinc-950;
   }
 
   body {
-    @apply min-h-screen bg-[#09090b] text-zinc-100 antialiased;
-    background-image:
-      radial-gradient(circle at top left, rgba(56, 189, 248, 0.08), transparent 15rem),
-      radial-gradient(circle at top right, rgba(99, 102, 241, 0.08), transparent 13rem),
-      linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px),
-      linear-gradient(180deg, #09090b 0%, #0f1117 100%);
-    background-size: auto, auto, 1.5rem 1.5rem, 1.5rem 1.5rem, auto;
-    background-position: 0 0, 100% 0, 0 0, 0 0, 0 0;
-    font-family: "Geist Sans", "IBM Plex Sans", "Inter", "Segoe UI", sans-serif;
+    @apply min-h-screen bg-zinc-950 text-zinc-100 antialiased;
+    font-family: "Geist Sans", "IBM Plex Sans", "Segoe UI", sans-serif;
   }
 
   h1,
   h2,
   h3,
   h4 {
-    font-family: "Geist Sans", "IBM Plex Sans", "Inter", "Segoe UI", sans-serif;
+    font-family: "Geist Sans", "IBM Plex Sans", "Segoe UI", sans-serif;
   }
 
   code,
   pre,
   kbd {
-    font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+    font-family: "Geist Mono", "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
   }
 
   a {
     @apply transition-colors;
   }
+
+  ::selection {
+    @apply bg-zinc-700 text-zinc-50;
+  }
 }
 
 @layer components {
   .page-shell {
-    @apply mx-auto w-full max-w-[1540px] px-3 py-3 md:px-4 lg:px-5;
+    @apply mx-auto w-full max-w-7xl px-4 py-4 md:px-6 md:py-6;
   }
 
   .frosted-panel {
-    @apply rounded-xl border border-zinc-800/90 bg-zinc-950/88 shadow-[0_14px_40px_rgba(0,0,0,0.38)] backdrop-blur-xl;
+    @apply rounded-lg border border-zinc-800 bg-zinc-950 shadow-sm;
+  }
+
+  .surface-panel {
+    @apply rounded-lg border border-zinc-800 bg-zinc-950 shadow-sm;
+  }
+
+  .surface-grid {
+    @apply bg-zinc-950;
+  }
+
+  .surface-muted {
+    @apply rounded-lg border border-zinc-800 bg-zinc-900/60;
+  }
+
+  .surface-strong {
+    @apply rounded-lg border border-zinc-800 bg-zinc-950;
   }
 
   .eyebrow {
-    @apply text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-500;
+    @apply text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500;
   }
 
   .field-label {
-    @apply mb-1.5 block text-xs font-medium uppercase tracking-[0.14em] text-zinc-400;
+    @apply mb-2 block text-sm font-medium text-zinc-300;
   }
 
   .terminal-panel {
-    @apply rounded-xl border border-zinc-800 bg-black/60 shadow-[0_12px_36px_rgba(0,0,0,0.4)];
+    @apply rounded-lg border border-zinc-800 bg-zinc-950 shadow-sm;
   }
 
   .panel-header {
-    @apply flex items-center justify-between gap-3 border-b border-zinc-800/80 pb-3;
+    @apply flex items-start justify-between gap-4 border-b border-zinc-800 pb-4;
   }
 
   .section-stack {
-    @apply space-y-4;
+    @apply space-y-6;
   }
 
   .dense-copy {
@@ -161,6 +173,10 @@
 
   .meta-list {
     @apply flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500;
+  }
+
+  .status-dot {
+    @apply inline-block size-2 rounded-full bg-emerald-400;
   }
 }
 

@@ -17,20 +17,30 @@ const props = withDefaults(
   },
 )
 
-const classes = computed(() =>
+const accentBorder = computed(() =>
   cn(
-    props.accent === 'sky' && 'border-sky-500/20 bg-sky-500/5',
-    props.accent === 'emerald' && 'border-emerald-500/20 bg-emerald-500/5',
-    props.accent === 'amber' && 'border-amber-500/20 bg-amber-500/5',
+    props.accent === 'default' && 'border-zinc-800',
+    props.accent === 'sky' && 'border-sky-500/30',
+    props.accent === 'emerald' && 'border-emerald-500/30',
+    props.accent === 'amber' && 'border-amber-500/30',
+  ),
+)
+
+const accentText = computed(() =>
+  cn(
+    props.accent === 'default' && 'text-zinc-50',
+    props.accent === 'sky' && 'text-sky-300',
+    props.accent === 'emerald' && 'text-emerald-300',
+    props.accent === 'amber' && 'text-amber-300',
   ),
 )
 </script>
 
 <template>
-  <Card :class="cn('space-y-2', classes)">
-    <p class="eyebrow">{{ props.label }}</p>
-    <p class="text-2xl font-semibold tracking-tight text-zinc-50">{{ props.value }}</p>
-    <p v-if="props.caption" class="text-xs leading-5 text-zinc-400">
+  <Card :class="cn('space-y-2', accentBorder)">
+    <p class="text-sm font-medium text-zinc-400">{{ props.label }}</p>
+    <p :class="cn('text-3xl font-semibold tracking-tight', accentText)">{{ props.value }}</p>
+    <p v-if="props.caption" class="text-sm leading-6 text-zinc-400">
       {{ props.caption }}
     </p>
   </Card>

@@ -30,7 +30,7 @@ var uiBootstrap = mustMarshalUIBootstrap(map[string]any{
 		"repositoryAccess":     true,
 		"repositoryAutomation": true,
 		"repositoryActivity":   true,
-		"repositorySettings":   false,
+		"repositorySettings":   true,
 	},
 })
 

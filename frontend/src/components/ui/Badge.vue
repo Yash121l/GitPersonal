@@ -6,11 +6,11 @@ import { cn } from '@/lib/utils'
 
 defineOptions({ name: 'UiBadge' })
 
-const badgeVariants = cva('inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-medium tracking-wide', {
+const badgeVariants = cva('inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-medium', {
   variants: {
     variant: {
       neutral: 'border-zinc-800 bg-zinc-900 text-zinc-300',
-      accent: 'border-sky-500/30 bg-sky-500/10 text-sky-300',
+      accent: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
       warning: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
       danger: 'border-red-500/30 bg-red-500/10 text-red-300',
     },

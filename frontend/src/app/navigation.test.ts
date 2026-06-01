@@ -7,10 +7,10 @@ describe('navigation config', () => {
     expect(getDefaultWorkspaceRoute()).toEqual({ name: 'overview' })
   })
 
-  it('filters disabled repository settings from the visible repository navigation', () => {
+  it('exposes the GitHub-style repository sections', () => {
     const labels = getRepositoryNavigation().map((item) => item.label)
 
-    expect(labels).toEqual(['Code', 'Access', 'Automation', 'Activity'])
+    expect(labels).toEqual(['Code', 'Issues', 'Pull Requests', 'Actions', 'Insights', 'Access', 'Automation', 'Activity', 'Settings'])
   })
 
   it('builds repository destinations from the configured default module', () => {
@@ -24,7 +24,7 @@ describe('navigation config', () => {
   it('keeps workspace navigation grouped for the shell', () => {
     const groups = getWorkspaceNavigationGroups()
 
-    expect(groups.map((group) => group.label)).toEqual(['Workspace', 'Collaboration'])
-    expect(groups[0]?.items.map((item) => item.label)).toEqual(['Overview', 'Repositories'])
+    expect(groups.map((group) => group.label)).toEqual(['Workspace', 'Collaboration', 'Account'])
+    expect(groups[0]?.items.map((item) => item.label)).toEqual(['Overview', 'Repositories', 'Explore'])
   })
 })

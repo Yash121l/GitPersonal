@@ -1,11 +1,14 @@
 import {
   Activity,
+  Compass,
   FolderGit2,
   Gauge,
   KeyRound,
   Landmark,
+  Search,
   Settings2,
   ShieldCheck,
+  UserRound,
   Zap,
 } from '@lucide/vue'
 import type { Component } from 'vue'
@@ -16,9 +19,14 @@ import type { FeatureFlag } from '@/app/features'
 
 export type AppRouteName =
   | 'overview'
+  | 'explore'
   | 'repositories'
+  | 'new-repository'
+  | 'new-organization'
   | 'organizations'
   | 'keys'
+  | 'account-settings'
+  | 'profile'
   | 'repository-code'
   | 'repository-access'
   | 'repository-automation'
@@ -35,7 +43,7 @@ interface BaseNavigationItem {
 }
 
 export interface WorkspaceNavigationItem extends BaseNavigationItem {
-  group: 'workspace' | 'collaboration'
+  group: 'workspace' | 'collaboration' | 'account'
   to: RouteLocationRaw
   routeName: AppRouteName
 }
@@ -72,7 +80,27 @@ const workspaceItems: WorkspaceNavigationItem[] = [
     routeName: 'repositories',
     to: { name: 'repositories' },
     group: 'workspace',
-    matchRouteNames: ['repositories', 'repository-code', 'repository-access', 'repository-automation', 'repository-activity', 'repository-settings'],
+    matchRouteNames: [
+      'repositories',
+      'new-repository',
+      'new-organization',
+      'repository-code',
+      'repository-access',
+      'repository-automation',
+      'repository-activity',
+      'repository-settings',
+    ],
+  },
+  {
+    id: 'workspace-explore',
+    label: 'Explore',
+    description: 'Search users and public repositories.',
+    icon: Compass,
+    feature: 'repositories',
+    routeName: 'explore',
+    to: { name: 'explore' },
+    group: 'workspace',
+    matchRouteNames: ['explore'],
   },
   {
     id: 'workspace-organizations',
@@ -96,6 +124,28 @@ const workspaceItems: WorkspaceNavigationItem[] = [
     group: 'collaboration',
     matchRouteNames: ['keys'],
   },
+  {
+    id: 'workspace-profile',
+    label: 'Profile',
+    description: 'Public account page and owned repositories.',
+    icon: UserRound,
+    feature: 'workspaceOverview',
+    routeName: 'profile',
+    to: { name: 'profile' },
+    group: 'account',
+    matchRouteNames: ['profile'],
+  },
+  {
+    id: 'workspace-settings',
+    label: 'Settings',
+    description: 'Account profile, SSH keys, and preferences.',
+    icon: Settings2,
+    feature: 'workspaceOverview',
+    routeName: 'account-settings',
+    to: { name: 'account-settings' },
+    group: 'account',
+    matchRouteNames: ['account-settings'],
+  },
 ]
 
 const repositoryItems: RepositoryNavigationItem[] = [
@@ -111,6 +161,58 @@ const repositoryItems: RepositoryNavigationItem[] = [
       name: 'repository-code',
       params: { owner, repo },
       query: currentQuery,
+    }),
+  },
+  {
+    id: 'repo-issues',
+    label: 'Issues',
+    description: 'Issue tracking route scaffold.',
+    icon: Search,
+    feature: 'repositoryAccess',
+    routeName: 'repository-access',
+    matchRouteNames: ['repository-issues'],
+    to: ({ owner, repo }) => ({
+      name: 'repository-issues',
+      params: { owner, repo },
+    }),
+  },
+  {
+    id: 'repo-pulls',
+    label: 'Pull Requests',
+    description: 'Pull request route scaffold.',
+    icon: Activity,
+    feature: 'repositoryAccess',
+    routeName: 'repository-access',
+    matchRouteNames: ['repository-pulls'],
+    to: ({ owner, repo }) => ({
+      name: 'repository-pulls',
+      params: { owner, repo },
+    }),
+  },
+  {
+    id: 'repo-actions',
+    label: 'Actions',
+    description: 'CI workflow and webhook automation.',
+    icon: Zap,
+    feature: 'repositoryAutomation',
+    routeName: 'repository-automation',
+    matchRouteNames: ['repository-actions', 'repository-automation'],
+    to: ({ owner, repo }) => ({
+      name: 'repository-actions',
+      params: { owner, repo },
+    }),
+  },
+  {
+    id: 'repo-insights',
+    label: 'Insights',
+    description: 'Repository activity and health signals.',
+    icon: Activity,
+    feature: 'repositoryActivity',
+    routeName: 'repository-activity',
+    matchRouteNames: ['repository-insights', 'repository-activity'],
+    to: ({ owner, repo }) => ({
+      name: 'repository-insights',
+      params: { owner, repo },
     }),
   },
   {
@@ -159,7 +261,7 @@ const repositoryItems: RepositoryNavigationItem[] = [
     icon: Settings2,
     feature: 'repositorySettings',
     routeName: 'repository-settings',
-    matchRouteNames: ['repository-settings'],
+    matchRouteNames: ['repository-settings', 'repository-settings-access', 'repository-settings-branches', 'repository-settings-hooks', 'repository-settings-keys', 'repository-settings-pages', 'repository-settings-secrets'],
     to: ({ owner, repo }) => ({
       name: 'repository-settings',
       params: { owner, repo },
@@ -187,6 +289,11 @@ export function getWorkspaceNavigationGroups() {
       id: 'collaboration',
       label: 'Collaboration',
       items: items.filter((item) => item.group === 'collaboration'),
+    },
+    {
+      id: 'account',
+      label: 'Account',
+      items: items.filter((item) => item.group === 'account'),
     },
   ].filter((group) => group.items.length > 0)
 }

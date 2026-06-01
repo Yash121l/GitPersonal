@@ -29,7 +29,7 @@ const items = computed(() => rowVirtualizer.value.getVirtualItems())
 </script>
 
 <template>
-  <div ref="parentRef" class="h-[28rem] overflow-auto rounded-xl border border-zinc-800 bg-black/20 scrollbar-subtle">
+  <div ref="parentRef" class="h-[28rem] overflow-auto rounded-lg border border-zinc-800 bg-zinc-950 scrollbar-subtle">
     <div :style="{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }">
       <button
         v-for="item in items"
@@ -37,8 +37,8 @@ const items = computed(() => rowVirtualizer.value.getVirtualItems())
         type="button"
         :class="
           cn(
-            'absolute left-0 flex w-full items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3 text-left text-zinc-300 transition hover:bg-zinc-900/80 hover:text-zinc-100',
-            activePath === props.entries[item.index]?.path ? 'bg-zinc-900 text-zinc-50 hover:bg-zinc-900' : '',
+            'absolute left-0 flex w-full items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3 text-left text-zinc-300 transition hover:bg-zinc-900 hover:text-zinc-100',
+            activePath === props.entries[item.index]?.path ? 'bg-zinc-900 text-zinc-50' : '',
           )
         "
         :style="{ transform: `translateY(${item.start}px)` }"
